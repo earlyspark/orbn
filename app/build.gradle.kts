@@ -36,6 +36,23 @@ android {
     buildFeatures {
         compose = true
     }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    // Only build for the MindOne's ABI in debug; add others if portability is needed later.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a")
+            isUniversalApk = false
+        }
+    }
 }
 
 dependencies {
@@ -48,4 +65,5 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     debugImplementation(libs.androidx.ui.tooling)
+    implementation(libs.kotlinx.coroutines.android)
 }

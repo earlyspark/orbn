@@ -22,3 +22,9 @@ local.properties
 # Kept LOCAL for now (not published yet — strategy/spec + local tooling config)
 /docs/
 /.claude/
+
+# Prebuilt native dependencies — fetched via scripts/fetch-native-deps.sh,
+# kept out of git history (large binaries + vendored headers). See README.
+/app/libs/
+/app/src/main/jniLibs/
+/app/src/main/assets/models/

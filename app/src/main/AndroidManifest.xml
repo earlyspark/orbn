@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- No external storage permission needed: orbn only reads/writes its own
+         app-owned folder (getExternalFilesDir), which requires no permission. -->
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"

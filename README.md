@@ -49,15 +49,19 @@ If the idea of a music player that actually knows how you're doing seems neat to
 
 ## Status
 
-🚧 **Very early — not yet usable.** The hard technical risks have been validated on real hardware
-(on-device audio analysis and on-device ML both work on the MindOne), and the app currently builds
-and runs a home screen. The actual player is being built out milestone by milestone in the open.
+🚧 **Very early — not yet usable.** The hardest technical risks are validated on real hardware:
+on-device audio analysis runs end to end on the MindOne — a real track is decoded and tagged with
+tempo, key, energy, and mood entirely on the device. The library, playback, biometrics, matching,
+and visualizer are being built out milestone by milestone in the open.
 
 ## The device
 
 orbn targets the **iKKO MindOne**: a small, near-square Android 15 device with a Cirrus Logic DAC,
 no Google services, and a focus on audio. The goal is a standalone, glanceable music player you live
 inside — with the occasional check of your Oura data — rather than a phone-style app.
+
+> orbn is being developed on the iKKO MindOne but is written as a general Android app —
+> the intention is for it to work for any Android + Oura Ring user, not just iKKO owners.
 
 ## How it works (high level)
 
@@ -85,8 +89,12 @@ Oura Ring ──► daily recovery + intra-day heart rate ──► "how you are
 orbn is an Android app. You'll need Android Studio (or the Android SDK + NDK) and JDK 21.
 
 ```bash
-./gradlew :app:installDebug   # build and install on a connected device
+./scripts/fetch-native-deps.sh   # one-time: download prebuilt native deps (Essentia, ONNX Runtime, Eigen, models)
+./gradlew :app:installDebug      # build and install on a connected device
 ```
+
+The native dependencies are large prebuilt binaries kept out of git; the script fetches them
+from a GitHub Release and unpacks them where the build expects.
 
 > More detailed setup (including how to connect your own Oura account) will be documented as those
 > parts of the app come together.
