@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base app theme: dark, no action bar. Uses platform Material to avoid pulling in
+         the Material Components XML library (Compose Material3 handles in-app theming). -->
+    <style name="Theme.Orbn" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/orbn_bg</item>
+        <item name="android:statusBarColor">@color/orbn_bg</item>
+        <item name="android:navigationBarColor">@color/orbn_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

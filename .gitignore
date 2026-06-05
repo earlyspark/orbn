@@ -1,0 +1,24 @@
+# Android / Gradle
+*.iml
+.gradle/
+/local.properties
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Per-module build outputs
+**/build/
+
+# IDE
+.idea/
+*.hprof
+
+# Python spike venv (if any lands here)
+.venv/
+
+# Kept LOCAL for now (not published yet — strategy/spec + local tooling config)
+/docs/
+/.claude/
