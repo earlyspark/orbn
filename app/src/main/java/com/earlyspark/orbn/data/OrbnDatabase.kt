@@ -18,7 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OuraHeartRateEntity::class,
         OuraSessionEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class OrbnDatabase : RoomDatabase() {
@@ -75,6 +75,19 @@ abstract class OrbnDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 → v5 adds the M5 analysis features (danceability, voice/instrumental). Existing rows
+         * get the columns as NULL and their `analyzedAt` reset, which re-queues them through the
+         * tagging worker once so the new features are filled in (analysis is reproducible).
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `danceability` REAL")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `voiceInstrumental` REAL")
+                db.execSQL("UPDATE `tracks` SET `analyzedAt` = NULL")
+            }
+        }
+
         fun get(context: Context): OrbnDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -82,7 +95,7 @@ abstract class OrbnDatabase : RoomDatabase() {
                     OrbnDatabase::class.java,
                     "orbn.db"
                 )
-                    .addMigrations(MIGRATION_3_4)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
                     // Backstop only: analysis data is reproducible from the audio files, so an
                     // unforeseen schema gap can safely rebuild + re-tag rather than crash.
                     .fallbackToDestructiveMigration()

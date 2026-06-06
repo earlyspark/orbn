@@ -26,5 +26,7 @@ data class TrackEntity(
     val genre: String? = null,
     val genreConfidence: Float? = null,
     val moodTagsJson: String? = null,
+    val danceability: Float? = null,
+    val voiceInstrumental: Float? = null,
     val analyzedAt: Long? = null,
 )

@@ -55,6 +55,8 @@ class TaggingWorker(
                         genre = result.genre,
                         genreConfidence = result.genreConfidence,
                         moodTagsJson = encodeTags(result.moodTagNames, result.moodTagScores),
+                        danceability = result.danceability,
+                        voiceInstrumental = result.voiceInstrumental,
                         analyzedAt = System.currentTimeMillis(),
                     )
                 )

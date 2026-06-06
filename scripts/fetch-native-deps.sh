@@ -20,8 +20,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-VERSION="native-deps-v1"
-ASSET="orbn-native-deps-v1.tar.gz"
+VERSION="native-deps-v2"
+ASSET="orbn-native-deps-v2.tar.gz"
 URL="https://github.com/earlyspark/orbn/releases/download/${VERSION}/${ASSET}"
 
 # A sentinel file we expect to exist once deps are unpacked.

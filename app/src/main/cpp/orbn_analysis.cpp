@@ -60,6 +60,8 @@ static constexpr const char* MODEL_MOOD_SAD   = "models/mood_sad-msd-musicnn-1.o
 static constexpr const char* MODEL_MOOD_AGGR  = "models/mood_aggressive-msd-musicnn-1.onnx";
 static constexpr const char* MODEL_MOOD_RELAX = "models/mood_relaxed-msd-musicnn-1.onnx";
 static constexpr const char* MODEL_GENRE      = "models/genre_rosamerica-msd-musicnn-1.onnx";
+static constexpr const char* MODEL_DANCE      = "models/danceability-msd-musicnn-1.onnx";
+static constexpr const char* MODEL_VOICE_INST = "models/voice_instrumental-msd-musicnn-1.onnx";
 
 // genre_rosamerica output classes (order matches the model). Mapped to readable names.
 static const char* GENRE_CLASSES[8] = {
@@ -275,7 +277,7 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
     jclass taClass = env->FindClass("com/earlyspark/orbn/analysis/TrackAnalysis");
     if (!taClass) { LOGE("TrackAnalysis class not found"); return nullptr; }
     jmethodID ctor = env->GetMethodID(taClass, "<init>",
-        "(FFFFFLjava/lang/String;FLjava/lang/String;Ljava/util/List;Ljava/util/List;)V");
+        "(FFFFFLjava/lang/String;FLjava/lang/String;Ljava/util/List;Ljava/util/List;FF)V");
     if (!ctor) { LOGE("TrackAnalysis ctor not found"); return nullptr; }
     jclass listClass    = env->FindClass("java/util/ArrayList");
     jmethodID listCtor  = env->GetMethodID(listClass, "<init>", "()V");
@@ -424,11 +426,13 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
     auto aggr  = run_head(ortEnv, so, mgr, MODEL_MOOD_AGGR,  meanEmb, memInfo);
     auto relax = run_head(ortEnv, so, mgr, MODEL_MOOD_RELAX, meanEmb, memInfo);
     auto genre = run_head(ortEnv, so, mgr, MODEL_GENRE,      meanEmb, memInfo);
+    auto dance = run_head(ortEnv, so, mgr, MODEL_DANCE,      meanEmb, memInfo);
+    auto voice = run_head(ortEnv, so, mgr, MODEL_VOICE_INST, meanEmb, memInfo);
     auto t9 = clk::now();
-    LOGI("ORT heads (5): %.1f ms", elapsed_ms(t8, t9));
+    LOGI("ORT heads (7): %.1f ms", elapsed_ms(t8, t9));
 
     if (happy.size() < 2 || sad.size() < 2 || aggr.size() < 2 ||
-        relax.size() < 2 || genre.size() < 8) {
+        relax.size() < 2 || genre.size() < 8 || dance.size() < 2 || voice.size() < 2) {
         LOGE("A classification head failed to produce output");
         return nullptr;
     }
@@ -437,6 +441,10 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
     float sadScore   = sad[1];
     float aggrScore  = aggr[0];
     float relaxScore = relax[1];
+    //   danceability:       [danceable, not_danceable]  → danceable    at [0]
+    //   voice_instrumental: [instrumental, voice]       → instrumental at [0]
+    float danceScore = dance[0];
+    float instrScore = voice[0];
 
     // Affect plane: valence (pleasant↔unpleasant), energy (calm↔energetic activation).
     float valence = std::clamp((happyScore + (1.f - sadScore)) / 2.f, 0.f, 1.f);
@@ -460,12 +468,14 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
 
     double totalMs = elapsed_ms(autoTimer, clk::now());
     LOGI("=== TrackAnalysis complete: %.1f ms total ===", totalMs);
-    LOGI("  BPM=%.1f Key=%s Loudness=%.3f Valence=%.3f Energy=%.3f Genre=%s(%.2f)",
-         bpm, keyFull.c_str(), loudnessNorm, valence, energyAxis, genreName, genreConf);
+    LOGI("  BPM=%.1f Key=%s Loudness=%.3f Valence=%.3f Energy=%.3f Genre=%s(%.2f) Dance=%.2f Instr=%.2f",
+         bpm, keyFull.c_str(), loudnessNorm, valence, energyAxis, genreName, genreConf,
+         danceScore, instrScore);
 
     // ── Construct TrackAnalysis Kotlin object ─────────────────────────────────
     // Argument order matches TrackAnalysis: bpm, keyStrength, loudness, valence,
-    // energy, genre, genreConfidence, key, moodTagNames, moodTagScores.
+    // energy, genre, genreConfidence, key, moodTagNames, moodTagScores,
+    // danceability, voiceInstrumental.
     jstring jKey   = env->NewStringUTF(keyFull.c_str());
     jstring jGenre = env->NewStringUTF(genreName);
     return env->NewObject(taClass, ctor,
@@ -478,5 +488,7 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
         (jfloat)genreConf,
         jKey,
         tagNames,
-        tagScores);
+        tagScores,
+        (jfloat)danceScore,
+        (jfloat)instrScore);
 }

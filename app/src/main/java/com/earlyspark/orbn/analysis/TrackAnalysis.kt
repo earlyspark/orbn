@@ -19,6 +19,10 @@ package com.earlyspark.orbn.analysis
  * @param key             Human-readable key, e.g. "A minor".
  * @param moodTagNames    Mood labels: happy, sad, aggressive, relaxed.
  * @param moodTagScores   Parallel raw scores for each mood label.
+ * @param danceability    Probability the track is danceable (0–1) — a rhythmic-groove feature
+ *                        that feeds the corrected energy fold (M5), distinct from raw BPM.
+ * @param voiceInstrumental Probability the track is instrumental (0–1) — gates functional moods
+ *                        like "focused"/"background" (D17).
  */
 data class TrackAnalysis(
     val bpm: Float,
@@ -31,6 +35,8 @@ data class TrackAnalysis(
     val key: String,
     val moodTagNames: List<String>,
     val moodTagScores: List<Float>,
+    val danceability: Float,
+    val voiceInstrumental: Float,
 ) {
     /** Plain-language mood word from the valence/energy quadrant. */
     val moodWord: String get() = when {
