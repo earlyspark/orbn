@@ -75,4 +75,8 @@ dependencies {
 
     // WorkManager (background tagging job)
     implementation(libs.androidx.work.runtime.ktx)
+
+    // Media3 / ExoPlayer (playback + media session)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.session)
 }
