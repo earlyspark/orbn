@@ -56,6 +56,23 @@ class MatcherTest {
     }
 
     @Test
+    fun recency_downweights_but_never_excludes() {
+        // Two equally-fit tracks; "recent" carries a strong recency penalty.
+        val pool = listOf(cand("fresh", 0.5f), cand("recent", 0.5f))
+        val recency = mapOf("recent" to 0.1f)
+        var freshFirst = 0
+        var recentSeen = 0
+        repeat(1000) { seed ->
+            val first = Matcher.buildQueue(
+                pool, MatchTarget(0.5f, 0.2f), count = 1, random = Random(seed.toLong()), recency = recency,
+            ).first().id
+            if (first == "fresh") freshFirst++ else recentSeen++
+        }
+        assertTrue("fresh should dominate (~10:1), was $freshFirst/1000", freshFirst in 820..960)
+        assertTrue("recent should still surface sometimes, was $recentSeen", recentSeen > 0)
+    }
+
+    @Test
     fun instrumental_gate_filters_when_set() {
         val pool = listOf(cand("vocal", 0.5f, instrumental = 0.1f), cand("instr", 0.5f, instrumental = 0.9f))
         val q = Matcher.buildQueue(pool, MatchTarget(0.5f, 0.2f, instrumentalMin = 0.5f), 5, Random(1))

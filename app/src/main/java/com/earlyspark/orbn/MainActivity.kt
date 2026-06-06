@@ -58,6 +58,8 @@ import com.earlyspark.orbn.library.TaggingWorker
 import com.earlyspark.orbn.match.AffectFold
 import com.earlyspark.orbn.match.MatchTarget
 import com.earlyspark.orbn.match.Matcher
+import com.earlyspark.orbn.match.QueueSequencer
+import com.earlyspark.orbn.match.RecencyPenalty
 import com.earlyspark.orbn.match.toFeaturesOrNull
 import com.earlyspark.orbn.match.toTarget
 import com.earlyspark.orbn.model.BiometricState
@@ -74,6 +76,15 @@ private val OrbnBg = Color(0xFF0A0A0F)
 
 /** How many tracks the matcher samples into a queue per build. */
 private const val QUEUE_SIZE = 30
+
+/** Recently-played tracks are down-weighted, recovering over this window (≈ a full small-library cycle). */
+private const val RECENCY_WINDOW_MS = 2 * 60 * 60 * 1000L
+private const val RECENCY_FLOOR = 0.1f
+
+/** Best-effort artist from an "Artist - Title.ext" filename; null if the pattern doesn't match. */
+private fun artistOf(path: String): String? =
+    path.substringAfterLast('/').substringBeforeLast('.')
+        .substringBefore(" - ", missingDelimiterValue = "").trim().ifBlank { null }
 
 class MainActivity : ComponentActivity() {
 
@@ -194,10 +205,13 @@ class MainActivity : ComponentActivity() {
      */
     private fun buildMatchedQueueInto(c: MediaController, autoPlay: Boolean) {
         lifecycleScope.launch {
-            val tracks = OrbnDatabase.get(applicationContext).trackDao().analyzed()
+            val db = OrbnDatabase.get(applicationContext)
+            val tracks = db.trackDao().analyzed()
+            val byPath = tracks.associateBy { it.path }
             val candidates = tracks.mapNotNull { t ->
                 val f = t.toFeaturesOrNull() ?: return@mapNotNull null
-                Matcher.Candidate(t.path, AffectFold.fold(f), f.instrumental)
+                // Prefer the embedded artist tag; fall back to the filename guess.
+                Matcher.Candidate(t.path, AffectFold.fold(f), f.instrumental, artist = t.artist ?: artistOf(t.path))
             }
             if (candidates.isEmpty()) {
                 // Nothing analyzed yet — keep playback working with the raw folder.
@@ -207,22 +221,37 @@ class MainActivity : ComponentActivity() {
             }
             val target = Oura.repository(applicationContext).currentState()?.toTarget()
                 ?: MatchTarget.neutral()
-            val queue = Matcher.buildQueue(candidates, target, count = QUEUE_SIZE)
+
+            // Recency penalty (D16): down-weight recently played tracks, from the D12 play-history log.
+            val now = System.currentTimeMillis()
+            val lastPlayed = db.playEventDao().lastPlayedSince(now - RECENCY_WINDOW_MS)
+                .associate { it.trackPath to it.lastPlayed }
+            val recency = RecencyPenalty.multipliers(lastPlayed, now, RECENCY_WINDOW_MS, RECENCY_FLOOR)
+
+            val queue = Matcher.buildQueue(candidates, target, count = QUEUE_SIZE, recency = recency)
+            // Reorder for a smooth energy contour + artist spread (selection unchanged).
+            val sequenced = QueueSequencer.sequence(queue)
             android.util.Log.i(
                 "OrbnMatch",
-                "target e=%.2f±%.2f val=%s → %d/%d queued; energies=%s".format(
+                "target e=%.2f±%.2f val=%s → %d/%d queued (%d recent); seq energies=%s".format(
                     target.energyCenter, target.energyBand,
                     target.valenceCenter?.let { "%.2f".format(it) } ?: "free",
-                    queue.size, candidates.size,
-                    queue.take(10).joinToString(",") { "%.2f".format(it.point.energy) },
+                    sequenced.size, candidates.size, lastPlayed.size,
+                    sequenced.take(10).joinToString(",") { "%.2f".format(it.point.energy) },
                 ),
             )
-            val items = queue.map { cand ->
+            val items = sequenced.map { cand ->
                 val f = java.io.File(cand.id)
+                val entity = byPath[cand.id]
                 MediaItem.Builder()
                     .setUri(android.net.Uri.fromFile(f))
                     .setMediaId(cand.id)
-                    .setMediaMetadata(MediaMetadata.Builder().setTitle(f.nameWithoutExtension).build())
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(entity?.title ?: f.nameWithoutExtension)
+                            .setArtist(entity?.artist)
+                            .build()
+                    )
                     .build()
             }
             c.setMediaItems(items)

@@ -20,11 +20,12 @@ import kotlin.random.Random
  */
 object Matcher {
 
-    /** A selectable track: its id (path) + affect coordinate, plus instrumentalness for gating. */
+    /** A selectable track: id (path) + affect coordinate, plus instrumentalness (gating) and artist (sequencing). */
     data class Candidate(
         val id: String,
         val point: AffectPoint,
         val instrumental: Float? = null,
+        val artist: String? = null,
     )
 
     private const val VALENCE_SIGMA = 0.25f
@@ -40,6 +41,7 @@ object Matcher {
         target: MatchTarget,
         count: Int,
         random: Random = Random.Default,
+        recency: Map<String, Float> = emptyMap(),
     ): List<Candidate> {
         // Functional-mood gate (no-op under Oura, where instrumentalMin is null).
         val pool = candidates.filter { c ->
@@ -48,7 +50,8 @@ object Matcher {
         }.toMutableList()
         if (pool.isEmpty() || count <= 0) return emptyList()
 
-        val weights = pool.mapTo(ArrayList()) { weightFor(it, target) }
+        // Fit weight × recency multiplier (recently-played tracks down-weighted, never excluded).
+        val weights = pool.mapTo(ArrayList()) { weightFor(it, target) * (recency[it.id] ?: 1f) }
         val n = minOf(count, pool.size)
         val result = ArrayList<Candidate>(n)
 

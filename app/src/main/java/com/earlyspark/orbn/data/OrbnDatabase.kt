@@ -17,13 +17,15 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OuraDailyEntity::class,
         OuraHeartRateEntity::class,
         OuraSessionEntity::class,
+        PlayEventEntity::class,
     ],
-    version = 5,
+    version = 7,
     exportSchema = false,
 )
 abstract class OrbnDatabase : RoomDatabase() {
     abstract fun trackDao(): TrackDao
     abstract fun ouraDao(): OuraDao
+    abstract fun playEventDao(): PlayEventDao
 
     companion object {
         @Volatile private var INSTANCE: OrbnDatabase? = null
@@ -88,6 +90,35 @@ abstract class OrbnDatabase : RoomDatabase() {
             }
         }
 
+        /** v5 → v6 adds the play-history log (D12). Additive; existing data untouched. */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `play_events` (
+                        `id` TEXT NOT NULL,
+                        `trackPath` TEXT NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `playedAt` INTEGER NOT NULL,
+                        `energyTarget` REAL,
+                        `readiness` INTEGER,
+                        `arousal` REAL,
+                        `source` TEXT,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /** v6 → v7 adds embedded artist/title columns to tracks (read-only metadata). Additive. */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `artist` TEXT")
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `title` TEXT")
+            }
+        }
+
         fun get(context: Context): OrbnDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -95,7 +126,7 @@ abstract class OrbnDatabase : RoomDatabase() {
                     OrbnDatabase::class.java,
                     "orbn.db"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     // Backstop only: analysis data is reproducible from the audio files, so an
                     // unforeseen schema gap can safely rebuild + re-tag rather than crash.
                     .fallbackToDestructiveMigration()

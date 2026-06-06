@@ -16,6 +16,10 @@ data class TrackEntity(
     @PrimaryKey val path: String,
     val sizeBytes: Long,
     val lastModified: Long,
+    // Embedded metadata read from the file's tags (null if absent); read-only — the mp3 is never
+    // written (F1). Falls back to the filename when missing.
+    val artist: String? = null,
+    val title: String? = null,
     // Analysis results (null until analyzed):
     val bpm: Float? = null,
     val musicKey: String? = null,
