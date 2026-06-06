@@ -49,10 +49,11 @@ If the idea of a music player that actually knows how you're doing seems neat to
 
 ## Status
 
-🚧 **Very early — not yet usable.** The hardest technical risks are validated on real hardware:
-on-device audio analysis runs end to end on the MindOne — a real track is decoded and tagged with
-tempo, key, energy, and mood entirely on the device. The library, playback, biometrics, matching,
-and visualizer are being built out milestone by milestone in the open.
+🚧 **Early — it plays music, but the biometric part isn't wired up yet.** Works on real hardware: 
+your library is scanned and analyzed entirely on-device (tempo, key, energy, mood, genre),
+and orbn plays it back — hi-res to the iKKO's DAC when the case is attached. Still to come,
+milestone by milestone in the open: the Oura biometric integration, the body→music matching, and
+the full-screen visualizer.
 
 ## The device
 
@@ -99,10 +100,10 @@ from a GitHub Release and unpacks them where the build expects.
 > More detailed setup (including how to connect your own Oura account) will be documented as those
 > parts of the app come together.
 
-## Roadmap (direction, not promises)
+## Roadmap
 
-On-device music analysis → background tagging of your library → audiophile playback →
-Oura integration → biometric matching → the reactive visualizer → polish.
+On-device music analysis → background tagging of your library → playback ✅ **— done so far** —
+→ **Oura integration (next)** → biometric matching → the reactive visualizer → polish.
 
 ## Author
 
