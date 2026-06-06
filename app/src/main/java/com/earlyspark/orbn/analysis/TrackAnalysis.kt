@@ -3,37 +3,45 @@ package com.earlyspark.orbn.analysis
 /**
  * The result of analyzing a single audio track.
  *
- * All float fields are normalized to 0–1 unless noted.
+ * Field order MUST match the JNI constructor call in orbn_analysis.cpp.
  *
- * @param bpm          Tempo in beats-per-minute (not normalized — raw value, e.g. 128.0).
- * @param keyStrength  Confidence of the key detection (0–1).
- * @param energy       Normalized RMS energy of the track (0–1).
- * @param valence      "Happiness" score from the mood_happy MusiCNN head (0–1).
- * @param moodTagNames  Ordered list of mood/genre tag label strings.
- * @param moodTagScores Parallel list of activation scores for each tag.
- * @param key          Human-readable key string, e.g. "A minor" or "C major".
+ * The affect model is **valence × energy** (see SPEC):
+ *  - valence = pleasantness (unpleasant ↔ pleasant)
+ *  - energy  = activation/intensity (calm ↔ energetic)
+ *
+ * @param bpm             Tempo in beats-per-minute (raw, e.g. 128.0).
+ * @param keyStrength     Confidence of the key detection (0–1).
+ * @param loudness        Normalized RMS loudness (0–1) — an input feature.
+ * @param valence         Pleasantness (0–1): high = happy & not sad.
+ * @param energy          Activation/intensity (0–1): high = aggressive & not relaxed.
+ * @param genre           Top genre label (rosamerica taxonomy), e.g. "rock".
+ * @param genreConfidence Activation of the winning genre (0–1).
+ * @param key             Human-readable key, e.g. "A minor".
+ * @param moodTagNames    Mood labels: happy, sad, aggressive, relaxed.
+ * @param moodTagScores   Parallel raw scores for each mood label.
  */
 data class TrackAnalysis(
     val bpm: Float,
     val keyStrength: Float,
-    val energy: Float,
+    val loudness: Float,
     val valence: Float,
+    val energy: Float,
+    val genre: String,
+    val genreConfidence: Float,
+    val key: String,
     val moodTagNames: List<String>,
     val moodTagScores: List<Float>,
-    val key: String,
 ) {
-    /** Convenience: whether the track leans "happy" (valence > 0.5). */
-    val isHappy: Boolean get() = valence > 0.5f
-
-    /** Plain-language mood word derived from the happy/non-happy valence. */
+    /** Plain-language mood word from the valence/energy quadrant. */
     val moodWord: String get() = when {
-        valence > 0.66f -> "bright"
-        valence > 0.33f -> "neutral"
-        else            -> "melancholic"
+        valence >= 0.5f && energy >= 0.5f -> "upbeat"
+        valence >= 0.5f && energy <  0.5f -> "serene"
+        valence <  0.5f && energy >= 0.5f -> "intense"
+        else                              -> "melancholic"
     }
 
     /** One-line summary for logcat / debug UI. */
     fun summary(): String =
-        "%.0f BPM  $key  energy=%.2f  valence=%.2f  [$moodWord]"
-            .format(bpm, energy, valence)
+        "%.0f BPM  $key  loud=%.2f  val=%.2f  energy=%.2f  $genre  [$moodWord]"
+            .format(bpm, loudness, valence, energy)
 }

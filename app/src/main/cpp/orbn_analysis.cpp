@@ -52,19 +52,18 @@ static constexpr int   TARGET_SR            = 16000;   // Essentia TensorflowInp
 static constexpr int   FRAME_SIZE           = 512;
 static constexpr int   HOP_SIZE             = 256;
 
-// ── Model file names (relative to assets/models/) ─────────────────────────────
+// ── Model file names (relative to assets/models/). All heads consume the same
+//    200-d MSD-MusiCNN embedding, so the embedding is computed once and reused. ──
 static constexpr const char* MODEL_EMBEDDING = "models/msd-musicnn-1.onnx";
-static constexpr const char* MODEL_MOOD      = "models/mood_happy-msd-musicnn-1.onnx";
+static constexpr const char* MODEL_MOOD_HAPPY = "models/mood_happy-msd-musicnn-1.onnx";
+static constexpr const char* MODEL_MOOD_SAD   = "models/mood_sad-msd-musicnn-1.onnx";
+static constexpr const char* MODEL_MOOD_AGGR  = "models/mood_aggressive-msd-musicnn-1.onnx";
+static constexpr const char* MODEL_MOOD_RELAX = "models/mood_relaxed-msd-musicnn-1.onnx";
+static constexpr const char* MODEL_GENRE      = "models/genre_rosamerica-msd-musicnn-1.onnx";
 
-// ── MSD auto-tag labels (50 classes, order matches model output) ───────────────
-static const char* MSD_TAGS[50] = {
-    "rock","pop","alternative","indie","electronic","female vocalists","dance",
-    "00s","alternative rock","jazz","beautiful","metal","chillout","male vocalists",
-    "classic rock","soul","indie rock","mellow","electronica","80s","folk","90s",
-    "chill","instrumental","punk","oldies","blues","hard rock","ambient","acoustic",
-    "experimental","female vocalist","guitar","hip-hop","70s","party","country",
-    "easy listening","sexy","catchy","funk","electro","heavy metal","progressive rock",
-    "60s","rnb","indie pop","sad","house","happy"
+// genre_rosamerica output classes (order matches the model). Mapped to readable names.
+static const char* GENRE_CLASSES[8] = {
+    "classical", "dance", "hip hop", "jazz", "pop", "r&b", "rock", "speech"
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +120,9 @@ static std::vector<float> decode_audio(const char* path) {
     int32_t srcSr = TARGET_SR, channels = 1;
     AMediaFormat_getInt32(fmt, AMEDIAFORMAT_KEY_SAMPLE_RATE, &srcSr);
     AMediaFormat_getInt32(fmt, AMEDIAFORMAT_KEY_CHANNEL_COUNT, &channels);
+    // Guard malformed headers (0/negative) to avoid divide-by-zero downstream.
+    if (channels < 1) channels = 1;
+    if (srcSr < 1) srcSr = TARGET_SR;
 
     const char* mime = nullptr;
     AMediaFormat_getString(fmt, AMEDIAFORMAT_KEY_MIME, &mime);
@@ -238,6 +240,28 @@ static std::vector<uint8_t> load_asset(AAssetManager* mgr, const char* name) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Run one classification head (a small model taking the 200-d embedding and
+// producing class activations). Returns the activation vector (empty on failure).
+// ─────────────────────────────────────────────────────────────────────────────
+static std::vector<float> run_head(Ort::Env& ortEnv, Ort::SessionOptions& so,
+                                   AAssetManager* mgr, const char* modelName,
+                                   const std::vector<float>& emb,
+                                   Ort::MemoryInfo& memInfo) {
+    auto buf = load_asset(mgr, modelName);
+    if (buf.empty()) return {};
+    Ort::Session sess(ortEnv, buf.data(), buf.size(), so);
+    std::vector<int64_t> shape = {1, (int64_t)emb.size()};
+    Ort::Value input = Ort::Value::CreateTensor<float>(
+        memInfo, const_cast<float*>(emb.data()), emb.size(), shape.data(), shape.size());
+    const char* inNames[]  = {"embeddings"};
+    const char* outNames[] = {"activations"};
+    auto out = sess.Run(Ort::RunOptions{nullptr}, inNames, &input, 1, outNames, 1);
+    float* d = out[0].GetTensorMutableData<float>();
+    size_t n = out[0].GetTensorTypeAndShapeInfo().GetElementCount();
+    return std::vector<float>(d, d + n);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // JNI: analyzeTrack
 // Signature: (Landroid/content/res/AssetManager;Ljava/lang/String;)
 //            Lcom/earlyspark/orbn/analysis/TrackAnalysis;
@@ -251,14 +275,13 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
     jclass taClass = env->FindClass("com/earlyspark/orbn/analysis/TrackAnalysis");
     if (!taClass) { LOGE("TrackAnalysis class not found"); return nullptr; }
     jmethodID ctor = env->GetMethodID(taClass, "<init>",
-        "(FFFFLjava/util/List;Ljava/util/List;Ljava/lang/String;)V");
+        "(FFFFFLjava/lang/String;FLjava/lang/String;Ljava/util/List;Ljava/util/List;)V");
     if (!ctor) { LOGE("TrackAnalysis ctor not found"); return nullptr; }
     jclass listClass    = env->FindClass("java/util/ArrayList");
     jmethodID listCtor  = env->GetMethodID(listClass, "<init>", "()V");
     jmethodID listAdd   = env->GetMethodID(listClass, "add", "(Ljava/lang/Object;)Z");
     jclass floatClass   = env->FindClass("java/lang/Float");
     jmethodID floatOf   = env->GetStaticMethodID(floatClass, "valueOf", "(F)Ljava/lang/Float;");
-    jclass strClass     = env->FindClass("java/lang/String");
 
     auto autoTimer = clk::now();
 
@@ -319,7 +342,7 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
     energyAlgo->compute();
     delete energyAlgo;
     float rms = std::sqrt(energySum / (float)std::max<size_t>(1, audio.size()));
-    float energyNorm = std::min(1.f, rms * 3.0f);  // empirical scale
+    float loudnessNorm = std::min(1.f, rms * 3.0f);  // empirical scale (input feature)
 
     // Mel spectrogram (TensorflowInputMusiCNN = 96-band mel @ 16kHz)
     auto t4 = clk::now();
@@ -357,19 +380,16 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
 
     essentia::shutdown();
 
-    // ── ONNX Runtime: MusiCNN embedding + mood head ───────────────────────────
+    // ── ONNX Runtime: MusiCNN embedding (once) → mood + genre heads ───────────
     AAssetManager* mgr = AAssetManager_fromJava(env, assetMgr);
-    auto embBuf  = load_asset(mgr, MODEL_EMBEDDING);
-    auto moodBuf = load_asset(mgr, MODEL_MOOD);
-    if (embBuf.empty() || moodBuf.empty()) return nullptr;
+    auto embBuf = load_asset(mgr, MODEL_EMBEDDING);
+    if (embBuf.empty()) return nullptr;
 
     Ort::Env ortEnv(ORT_LOGGING_LEVEL_WARNING, "orbn");
     Ort::SessionOptions so;
-    // Use all available CPU threads (Dimensity 7050 is octa-core)
-    so.SetIntraOpNumThreads(0);
+    so.SetIntraOpNumThreads(0);  // all cores (Dimensity 7050 is octa-core)
 
     Ort::Session embSess(ortEnv, embBuf.data(), embBuf.size(), so);
-    Ort::Session moodSess(ortEnv, moodBuf.data(), moodBuf.size(), so);
 
     auto memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
     std::vector<int64_t> embShape = {nPatches, MUSICNN_PATCH_FRAMES, MUSICNN_MEL_BANDS};
@@ -382,7 +402,6 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
     auto embOut = embSess.Run(Ort::RunOptions{nullptr},
                               embInNames, &embInput, 1, embOutNames, 1);
     auto t7 = clk::now();
-    LOGI("ORT embedding: %.1f ms", elapsed_ms(t6, t7));
 
     // Mean-pool embeddings over patches → [200]
     float* embData = embOut[0].GetTensorMutableData<float>();
@@ -391,49 +410,73 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
         for (int d = 0; d < EMB_DIM; ++d)
             meanEmb[d] += embData[k * EMB_DIM + d];
     for (auto& v : meanEmb) v /= (float)nPatches;
+    LOGI("ORT embedding: %.1f ms", elapsed_ms(t6, t7));
 
-    std::vector<int64_t> moodShape = {1, EMB_DIM};
-    Ort::Value moodInput = Ort::Value::CreateTensor<float>(
-        memInfo, meanEmb.data(), meanEmb.size(), moodShape.data(), moodShape.size());
-
-    const char* moodInNames[]  = {"embeddings"};
-    const char* moodOutNames[] = {"activations"};
+    // Run the classification heads (each tiny; all consume the same embedding).
+    // Class orderings differ per head (from each model's metadata):
+    //   mood_happy:      [happy, non_happy]        → happy at [0]
+    //   mood_sad:        [non_sad, sad]            → sad   at [1]
+    //   mood_aggressive: [aggressive, not_aggr.]   → aggr  at [0]
+    //   mood_relaxed:    [non_relaxed, relaxed]    → relax at [1]
     auto t8 = clk::now();
-    auto moodOut = moodSess.Run(Ort::RunOptions{nullptr},
-                                moodInNames, &moodInput, 1, moodOutNames, 1);
+    auto happy = run_head(ortEnv, so, mgr, MODEL_MOOD_HAPPY, meanEmb, memInfo);
+    auto sad   = run_head(ortEnv, so, mgr, MODEL_MOOD_SAD,   meanEmb, memInfo);
+    auto aggr  = run_head(ortEnv, so, mgr, MODEL_MOOD_AGGR,  meanEmb, memInfo);
+    auto relax = run_head(ortEnv, so, mgr, MODEL_MOOD_RELAX, meanEmb, memInfo);
+    auto genre = run_head(ortEnv, so, mgr, MODEL_GENRE,      meanEmb, memInfo);
     auto t9 = clk::now();
-    LOGI("ORT mood head: %.1f ms", elapsed_ms(t8, t9));
+    LOGI("ORT heads (5): %.1f ms", elapsed_ms(t8, t9));
 
-    float* moodData = moodOut[0].GetTensorMutableData<float>();
-    // mood_happy output: [happy, non_happy]
-    float valence = moodData[0];
+    if (happy.size() < 2 || sad.size() < 2 || aggr.size() < 2 ||
+        relax.size() < 2 || genre.size() < 8) {
+        LOGE("A classification head failed to produce output");
+        return nullptr;
+    }
 
-    // ── We only have mood_happy for now; the embedding is available for more ──
-    // Build tag lists: names + scores (top 10 of mood activations placeholder)
-    // For M1 we surface what we have: happy / non-happy + the mean embedding norm
-    // Additional mood heads (aggressive, relaxed, sad) will be added in M2.
+    float happyScore = happy[0];
+    float sadScore   = sad[1];
+    float aggrScore  = aggr[0];
+    float relaxScore = relax[1];
+
+    // Affect plane: valence (pleasant↔unpleasant), energy (calm↔energetic activation).
+    float valence = std::clamp((happyScore + (1.f - sadScore)) / 2.f, 0.f, 1.f);
+    float energyAxis = std::clamp((aggrScore + (1.f - relaxScore)) / 2.f, 0.f, 1.f);
+
+    // Genre = argmax over the 8 rosamerica classes.
+    int genreIdx = (int)(std::max_element(genre.begin(), genre.end()) - genre.begin());
+    float genreConf = genre[genreIdx];
+    const char* genreName = GENRE_CLASSES[genreIdx];
+
+    // mood tag list (names + scores) for "why this track" / debugging.
     jobject tagNames  = env->NewObject(listClass, listCtor);
     jobject tagScores = env->NewObject(listClass, listCtor);
-    env->CallBooleanMethod(tagNames,  listAdd, env->NewStringUTF("happy"));
-    env->CallBooleanMethod(tagScores, listAdd,
-        env->CallStaticObjectMethod(floatClass, floatOf, moodData[0]));
-    env->CallBooleanMethod(tagNames,  listAdd, env->NewStringUTF("non_happy"));
-    env->CallBooleanMethod(tagScores, listAdd,
-        env->CallStaticObjectMethod(floatClass, floatOf, moodData[1]));
+    const char* moodNames[4] = {"happy", "sad", "aggressive", "relaxed"};
+    float moodScores[4] = {happyScore, sadScore, aggrScore, relaxScore};
+    for (int i = 0; i < 4; ++i) {
+        env->CallBooleanMethod(tagNames,  listAdd, env->NewStringUTF(moodNames[i]));
+        env->CallBooleanMethod(tagScores, listAdd,
+            env->CallStaticObjectMethod(floatClass, floatOf, moodScores[i]));
+    }
 
     double totalMs = elapsed_ms(autoTimer, clk::now());
     LOGI("=== TrackAnalysis complete: %.1f ms total ===", totalMs);
-    LOGI("  BPM=%.1f  Key=%s  Energy=%.3f  Valence=%.3f",
-         bpm, keyFull.c_str(), energyNorm, valence);
+    LOGI("  BPM=%.1f Key=%s Loudness=%.3f Valence=%.3f Energy=%.3f Genre=%s(%.2f)",
+         bpm, keyFull.c_str(), loudnessNorm, valence, energyAxis, genreName, genreConf);
 
     // ── Construct TrackAnalysis Kotlin object ─────────────────────────────────
-    jstring jKey = env->NewStringUTF(keyFull.c_str());
+    // Argument order matches TrackAnalysis: bpm, keyStrength, loudness, valence,
+    // energy, genre, genreConfidence, key, moodTagNames, moodTagScores.
+    jstring jKey   = env->NewStringUTF(keyFull.c_str());
+    jstring jGenre = env->NewStringUTF(genreName);
     return env->NewObject(taClass, ctor,
         (jfloat)bpm,
         (jfloat)keyStrength,
-        (jfloat)energyNorm,
+        (jfloat)loudnessNorm,
         (jfloat)valence,
+        (jfloat)energyAxis,
+        jGenre,
+        (jfloat)genreConf,
+        jKey,
         tagNames,
-        tagScores,
-        jKey);
+        tagScores);
 }

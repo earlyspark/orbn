@@ -1,8 +1,6 @@
 package com.earlyspark.orbn
 
 import android.os.Bundle
-import android.os.Environment
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -23,12 +21,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -39,35 +33,64 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.earlyspark.orbn.analysis.AudioAnalyzer
+import androidx.lifecycle.lifecycleScope
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import com.earlyspark.orbn.library.LibraryRepository
+import com.earlyspark.orbn.library.TaggingWorker
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
-import java.io.File
 
 private val OrbnBg = Color(0xFF0A0A0F)
 
 class MainActivity : ComponentActivity() {
+
+    private lateinit var repository: LibraryRepository
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val analyzer = AudioAnalyzer(assets)
+        repository = LibraryRepository(applicationContext)
+
+        // Scan the library, then kick off background tagging for anything new.
+        rescanAndTag()
+
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = OrbnBg)) {
-                OrbnHome(analyzer)
+                OrbnHome(
+                    totalCount = repository.totalCount,
+                    analyzedCount = repository.analyzedCount,
+                    onTap = ::rescanAndTag,
+                )
             }
+        }
+    }
+
+    /** Reconcile the folder with the DB, then enqueue the (resumable) tagging job. */
+    private fun rescanAndTag() {
+        lifecycleScope.launch {
+            repository.scan()
+            val request = OneTimeWorkRequestBuilder<TaggingWorker>().build()
+            // KEEP: if a tagging run is already queued/running, don't duplicate it.
+            WorkManager.getInstance(applicationContext)
+                .enqueueUniqueWork(TaggingWorker.UNIQUE_NAME, ExistingWorkPolicy.KEEP, request)
         }
     }
 }
 
 /**
- * M0 home screen: a slowly "breathing" glowing orb on near-black — a first taste of the
- * eventual visualizer aesthetic. Proves the Gradle build -> APK -> device loop and Compose
- * rendering/animation on the MindOne.
+ * Home screen: the breathing orb plus a live library-tagging progress line.
+ * Tapping the orb re-scans the folder (handy after adding music) and resumes tagging.
  */
 @Composable
-fun OrbnHome(analyzer: AudioAnalyzer) {
-    var statusText by remember { mutableStateOf("tap orb to analyze first MP3") }
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
+fun OrbnHome(
+    totalCount: Flow<Int>,
+    analyzedCount: Flow<Int>,
+    onTap: () -> Unit,
+) {
+    val total by totalCount.collectAsState(initial = 0)
+    val analyzed by analyzedCount.collectAsState(initial = 0)
 
     val transition = rememberInfiniteTransition(label = "breathing")
     val pulse by transition.animateFloat(
@@ -80,6 +103,12 @@ fun OrbnHome(analyzer: AudioAnalyzer) {
         label = "pulse"
     )
 
+    val status = when {
+        total == 0 -> "drop music in the orbn folder, then tap"
+        analyzed < total -> "tagging your library…  $analyzed / $total"
+        else -> "library tagged · $total tracks"
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -90,34 +119,11 @@ fun OrbnHome(analyzer: AudioAnalyzer) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // The orb: tap to trigger M1 analysis test on the first MP3 found.
+            // Tap to re-scan the folder + resume tagging.
             Box(
                 modifier = Modifier
                     .size((180 * pulse).dp)
-                    .clickable {
-                        scope.launch {
-                            statusText = "scanning…"
-                            // Scan the app-owned Music folder — the permanent home for orbn files.
-                            // No scoped-storage friction; the app owns this directory outright.
-                            val musicDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
-                            val mp3 = musicDir
-                                ?.walkTopDown()
-                                ?.filter { it.isFile && it.extension.lowercase() in listOf("mp3","flac","m4a","aac","ogg") }
-                                ?.firstOrNull()
-                            if (mp3 == null) {
-                                statusText = "no audio files found\ndrop an MP3 on the device"
-                                return@launch
-                            }
-                            statusText = "analyzing\n${mp3.name}…"
-                            val result = analyzer.analyze(mp3.absolutePath)
-                            statusText = if (result != null) {
-                                Log.i("M1Test", result.summary())
-                                "${mp3.name}\n${result.summary()}"
-                            } else {
-                                "analysis failed — check logcat"
-                            }
-                        }
-                    }
+                    .clickable { onTap() }
                     .drawBehind {
                         val r = size.minDimension / 2f
                         drawCircle(
@@ -150,9 +156,8 @@ fun OrbnHome(analyzer: AudioAnalyzer) {
                 fontWeight = FontWeight.Normal,
                 modifier = Modifier.padding(top = 8.dp)
             )
-            // M1 test status — shows analysis result or instructions.
             Text(
-                text = statusText,
+                text = status,
                 color = Color(0xFF555A6E),
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,
