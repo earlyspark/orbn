@@ -116,6 +116,11 @@ The build injects these into `BuildConfig` at compile time; they are never hardc
 Without them the app still builds and plays music — it just shows "Oura: add credentials" instead
 of biometric data.
 
+Once connected, orbn reads your data on app-open and at each track change (and on demand), showing
+the time of the freshest reading. For this to stay current, **turn on background sync in the Oura
+app** — your ring only reaches Oura's cloud through that app, so with background sync off orbn can
+only see data from the last time you manually opened Oura.
+
 > More detailed setup will be documented as the remaining parts of the app come together.
 
 ## Roadmap
