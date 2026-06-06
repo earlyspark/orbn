@@ -52,8 +52,14 @@ import androidx.media3.session.SessionToken
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.earlyspark.orbn.data.OrbnDatabase
 import com.earlyspark.orbn.library.LibraryRepository
 import com.earlyspark.orbn.library.TaggingWorker
+import com.earlyspark.orbn.match.AffectFold
+import com.earlyspark.orbn.match.MatchTarget
+import com.earlyspark.orbn.match.Matcher
+import com.earlyspark.orbn.match.toFeaturesOrNull
+import com.earlyspark.orbn.match.toTarget
 import com.earlyspark.orbn.model.BiometricState
 import com.earlyspark.orbn.oura.Oura
 import com.earlyspark.orbn.oura.OuraAuthManager
@@ -65,6 +71,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 private val OrbnBg = Color(0xFF0A0A0F)
+
+/** How many tracks the matcher samples into a queue per build. */
+private const val QUEUE_SIZE = 30
 
 class MainActivity : ComponentActivity() {
 
@@ -144,7 +153,7 @@ class MainActivity : ComponentActivity() {
             c.addListener(playerListener)
             isPlaying.value = c.isPlaying
             nowPlaying.value = c.currentMediaItem?.mediaMetadata?.title?.toString()
-            if (c.mediaItemCount == 0) loadLibraryInto(c)
+            if (c.mediaItemCount == 0) buildMatchedQueueInto(c, autoPlay = false)
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -168,16 +177,57 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    /** Orb tap = play/pause. If nothing is queued yet, (re)load the library and start. */
+    /** Orb tap = play/pause. If nothing is queued yet, build a biometric-matched queue and start. */
     private fun onOrbTap() {
         val c = controller ?: return
         when {
-            c.mediaItemCount == 0 -> {
-                loadLibraryInto(c)
-                c.play()
-            }
+            c.mediaItemCount == 0 -> buildMatchedQueueInto(c, autoPlay = true)
             c.isPlaying -> c.pause()
             else -> c.play()
+        }
+    }
+
+    /**
+     * Build a biometric-matched play queue (M5.2): score the analyzed library through [AffectFold],
+     * sample it against the current target (Oura → [MatchTarget], else neutral), and set it on the
+     * player. Falls back to a plain folder listing if nothing is analyzed yet (e.g. mid-tagging).
+     */
+    private fun buildMatchedQueueInto(c: MediaController, autoPlay: Boolean) {
+        lifecycleScope.launch {
+            val tracks = OrbnDatabase.get(applicationContext).trackDao().analyzed()
+            val candidates = tracks.mapNotNull { t ->
+                val f = t.toFeaturesOrNull() ?: return@mapNotNull null
+                Matcher.Candidate(t.path, AffectFold.fold(f), f.instrumental)
+            }
+            if (candidates.isEmpty()) {
+                // Nothing analyzed yet — keep playback working with the raw folder.
+                loadLibraryInto(c)
+                if (autoPlay) c.play()
+                return@launch
+            }
+            val target = Oura.repository(applicationContext).currentState()?.toTarget()
+                ?: MatchTarget.neutral()
+            val queue = Matcher.buildQueue(candidates, target, count = QUEUE_SIZE)
+            android.util.Log.i(
+                "OrbnMatch",
+                "target e=%.2f±%.2f val=%s → %d/%d queued; energies=%s".format(
+                    target.energyCenter, target.energyBand,
+                    target.valenceCenter?.let { "%.2f".format(it) } ?: "free",
+                    queue.size, candidates.size,
+                    queue.take(10).joinToString(",") { "%.2f".format(it.point.energy) },
+                ),
+            )
+            val items = queue.map { cand ->
+                val f = java.io.File(cand.id)
+                MediaItem.Builder()
+                    .setUri(android.net.Uri.fromFile(f))
+                    .setMediaId(cand.id)
+                    .setMediaMetadata(MediaMetadata.Builder().setTitle(f.nameWithoutExtension).build())
+                    .build()
+            }
+            c.setMediaItems(items)
+            c.prepare()
+            if (autoPlay) c.play()
         }
     }
 

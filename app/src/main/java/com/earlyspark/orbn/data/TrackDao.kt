@@ -17,6 +17,10 @@ interface TrackDao {
     @Query("SELECT * FROM tracks WHERE path = :path")
     suspend fun byPath(path: String): TrackEntity?
 
+    /** One-shot snapshot of every analyzed track — input to the matching engine. */
+    @Query("SELECT * FROM tracks WHERE analyzedAt IS NOT NULL")
+    suspend fun analyzed(): List<TrackEntity>
+
     @Query("SELECT * FROM tracks ORDER BY path")
     fun allTracks(): Flow<List<TrackEntity>>
 
