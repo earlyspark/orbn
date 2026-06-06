@@ -106,4 +106,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.browser)
+
+    // Unit tests (JVM — matching engine is pure Kotlin)
+    testImplementation(libs.junit)
 }

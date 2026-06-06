@@ -14,6 +14,7 @@ okhttp = "4.12.0"
 kotlinxSerialization = "1.7.3"
 securityCrypto = "1.1.0-alpha06"
 browser = "1.8.0"
+junit = "4.13.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +38,7 @@ okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor",
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
