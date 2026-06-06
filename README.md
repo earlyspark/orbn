@@ -49,12 +49,13 @@ If the idea of a music player that actually knows how you're doing seems neat to
 
 ## Status
 
-🚧 **Early — it plays music and can read your body, but the two aren't connected yet.** Works on
-real hardware: your library is scanned and analyzed entirely on-device (tempo, key, energy, mood,
-genre), and orbn plays it back — hi-res to the iKKO's DAC when the case is attached. The Oura
-integration is in too: connect your ring and orbn reads your recovery and heart rate into a single
-"how you are right now" signal. Still to come, milestone by milestone in the open: the body→music
-matching that turns that signal into a queue, and the full-screen visualizer.
+🚧 **Early, but the core loop works: it reads your body and plays music to match.** On real
+hardware, orbn scans and analyzes your library entirely on-device (tempo, key, energy, mood, genre),
+connects to your Oura Ring to read your recovery and heart rate into a "how you are right now"
+signal, and **builds a play queue that fits that signal** — sampled for variety, ordered to flow,
+and mindful of what you've recently played so it doesn't repeat. Plays back hi-res to the iKKO's
+DAC when the case is attached. Still to come, in the open: the full-screen reactive visualizer, a manual mood picker,
+and a lot of polish.
 
 ## The device
 
@@ -125,8 +126,8 @@ only see data from the last time you manually opened Oura.
 
 ## Roadmap
 
-On-device music analysis → background tagging of your library → playback → Oura integration
-✅ **— done so far** — → **biometric matching (next)** → the reactive visualizer → polish.
+On-device music analysis → background tagging of your library → playback → Oura integration →
+biometric matching ✅ **— done so far** — → **the reactive visualizer (next)** → polish.
 
 ## Author
 
