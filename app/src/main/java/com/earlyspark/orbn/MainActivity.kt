@@ -6,6 +6,10 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Environment
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -50,6 +54,10 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.earlyspark.orbn.library.LibraryRepository
 import com.earlyspark.orbn.library.TaggingWorker
+import com.earlyspark.orbn.model.BiometricState
+import com.earlyspark.orbn.oura.Oura
+import com.earlyspark.orbn.oura.OuraAuthManager
+import com.earlyspark.orbn.oura.OuraRepository
 import com.earlyspark.orbn.playback.AudioCapabilities
 import com.earlyspark.orbn.playback.PlaybackService
 import kotlinx.coroutines.flow.Flow
@@ -71,12 +79,19 @@ class MainActivity : ComponentActivity() {
     private val nowPlaying = MutableStateFlow<String?>(null)
     private val isPlaying = MutableStateFlow(false)
 
+    // Minimal M4 readout: connection prompt / biometric summary. Full UX (swipe-to-state,
+    // "why this track") is M7 — this is just enough to drive and verify the Oura flow.
+    private val ouraLine = MutableStateFlow("")
+
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(playing: Boolean) {
             isPlaying.value = playing
         }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             nowPlaying.value = mediaItem?.mediaMetadata?.title?.toString()
+            // Keep the biometric target warm around track boundaries (gated — usually a no-op).
+            // In M5 this is where a fresh sync will drive next-track selection.
+            refreshOuraStatus(forceNetwork = false)
         }
     }
 
@@ -109,7 +124,9 @@ class MainActivity : ComponentActivity() {
                     analyzedCount = repository.analyzedCount,
                     nowPlaying = nowPlaying,
                     isPlaying = isPlaying,
+                    ouraLine = ouraLine,
                     onTap = ::onOrbTap,
+                    onOuraTap = ::onOuraTap,
                 )
             }
         }
@@ -129,6 +146,13 @@ class MainActivity : ComponentActivity() {
             nowPlaying.value = c.currentMediaItem?.mediaMetadata?.title?.toString()
             if (c.mediaItemCount == 0) loadLibraryInto(c)
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Reflect connection state and the cached biometric target whenever we return to the
+        // foreground (e.g. back from the OAuth browser tab). No network here — cache only.
+        refreshOuraStatus(forceNetwork = false)
     }
 
     override fun onStop() {
@@ -185,6 +209,77 @@ class MainActivity : ComponentActivity() {
                 .enqueueUniqueWork(TaggingWorker.UNIQUE_NAME, ExistingWorkPolicy.KEEP, request)
         }
     }
+
+    /**
+     * Oura line tap: connect if not yet authorized, otherwise pull a fresh sync. When orbn has no
+     * credentials at all, just say so (rather than launch a broken flow).
+     */
+    private fun onOuraTap() {
+        val repo = Oura.repository(applicationContext)
+        when {
+            !OuraAuthManager.isConfigured ->
+                ouraLine.value = "Oura: add credentials to local.properties"
+            !repo.isConnected -> OuraAuthManager.startAuthorization(this)
+            else -> refreshOuraStatus(forceNetwork = true)
+        }
+    }
+
+    /** Update [ouraLine] from cache, or pull a fresh sync first when [forceNetwork]. */
+    private fun refreshOuraStatus(forceNetwork: Boolean) {
+        val repo = Oura.repository(applicationContext)
+        when {
+            !OuraAuthManager.isConfigured -> {
+                ouraLine.value = "Oura: add credentials to local.properties"
+                return
+            }
+            !repo.isConnected -> {
+                ouraLine.value = "tap to connect Oura"
+                return
+            }
+        }
+        lifecycleScope.launch {
+            if (forceNetwork) ouraLine.value = "syncing Oura…"
+            // Manual tap forces a fetch; auto triggers (open/song change) are freshness-gated.
+            val result = if (forceNetwork) repo.refresh() else repo.refreshIfStale()
+            val state: BiometricState? = when (result) {
+                is OuraRepository.RefreshResult.Success -> result.state
+                OuraRepository.RefreshResult.NotConfigured -> {
+                    ouraLine.value = "Oura: add credentials to local.properties"; return@launch
+                }
+                OuraRepository.RefreshResult.NotConnected -> {
+                    ouraLine.value = "tap to connect Oura"; return@launch
+                }
+                is OuraRepository.RefreshResult.Error -> {
+                    // Manual tap surfaces the failure; an auto refresh keeps the cached readout.
+                    if (forceNetwork) { ouraLine.value = "Oura sync failed"; return@launch }
+                    repo.currentState()
+                }
+                null -> repo.currentState() // gated skip (still fresh / in flight) → show cache
+            }
+            ouraLine.value = formatOura(state)
+        }
+    }
+
+    private fun formatOura(state: BiometricState?): String {
+        if (state == null) return "Oura connected · tap to sync"
+        val energy = "energy %.2f".format(state.energyCenter)
+        val readiness = state.diagnostics.readinessScore?.let { "readiness $it" }
+        val synced = state.syncedAt?.let { "synced ${syncedAtLabel(it)}" }
+        return listOfNotNull(energy, readiness, synced).joinToString("  ·  ")
+    }
+
+    /**
+     * Absolute local-clock time of the freshest Oura datum (its real timestamp, not orbn's fetch
+     * time — see OuraRepository). Shown as a wall-clock time so it never goes stale on screen; the
+     * date is added only when the data isn't from today, so it can't be misread as recent.
+     */
+    private fun syncedAtLabel(ts: Long): String {
+        val zone = ZoneId.systemDefault()
+        val dt = Instant.ofEpochMilli(ts).atZone(zone)
+        val time = dt.format(DateTimeFormatter.ofPattern("h:mm a"))
+        return if (dt.toLocalDate() == LocalDate.now(zone)) time
+        else dt.format(DateTimeFormatter.ofPattern("MMM d, h:mm a"))
+    }
 }
 
 /**
@@ -196,12 +291,15 @@ fun OrbnHome(
     analyzedCount: Flow<Int>,
     nowPlaying: Flow<String?>,
     isPlaying: Flow<Boolean>,
+    ouraLine: Flow<String>,
     onTap: () -> Unit,
+    onOuraTap: () -> Unit,
 ) {
     val total by totalCount.collectAsState(initial = 0)
     val analyzed by analyzedCount.collectAsState(initial = 0)
     val playing by isPlaying.collectAsState(initial = false)
     val track by nowPlaying.collectAsState(initial = null)
+    val oura by ouraLine.collectAsState(initial = "")
 
     val transition = rememberInfiniteTransition(label = "breathing")
     val pulse by transition.animateFloat(
@@ -268,6 +366,17 @@ fun OrbnHome(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 16.dp, start = 32.dp, end = 32.dp)
             )
+            if (oura.isNotBlank()) {
+                Text(
+                    text = oura,
+                    color = Color(0xFF5B8DEF),
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .padding(top = 12.dp, start = 32.dp, end = 32.dp)
+                        .clickable { onOuraTap() }
+                )
+            }
         }
     }
 }

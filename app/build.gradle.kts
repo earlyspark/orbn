@@ -1,9 +1,22 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
 }
+
+// Oura OAuth credentials are NEVER hardcoded. They live in local.properties (gitignored)
+// and are surfaced as BuildConfig fields at build time. Missing values resolve to empty
+// strings; the app guards against that at runtime (see OuraConfig) rather than shipping
+// a default credential.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun secretProp(key: String): String = localProps.getProperty(key) ?: ""
 
 android {
     namespace = "com.earlyspark.orbn"
@@ -15,6 +28,12 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // Injected from local.properties — see note above. Quoted because buildConfigField
+        // emits raw Kotlin source.
+        buildConfigField("String", "OURA_CLIENT_ID", "\"${secretProp("OURA_CLIENT_ID")}\"")
+        buildConfigField("String", "OURA_CLIENT_SECRET", "\"${secretProp("OURA_CLIENT_SECRET")}\"")
+        buildConfigField("String", "OURA_REDIRECT_URI", "\"${secretProp("OURA_REDIRECT_URI")}\"")
     }
 
     buildTypes {
@@ -36,6 +55,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     externalNativeBuild {
@@ -79,4 +99,11 @@ dependencies {
     // Media3 / ExoPlayer (playback + media session)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.session)
+
+    // Oura integration (M4): HTTP + JSON + encrypted token storage + OAuth browser tab
+    implementation(libs.okhttp)
+    debugImplementation(libs.okhttp.logging)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.androidx.browser)
 }

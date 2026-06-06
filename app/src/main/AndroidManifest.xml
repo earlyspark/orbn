@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Network access for the Oura Web API (the only external service orbn talks to). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -24,6 +28,25 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Catches the Oura OAuth2 redirect (com.earlyspark.orbn://oauth2redirect).
+             The scheme/host here MUST match the OURA_REDIRECT_URI in local.properties and the
+             redirect URI registered in the Oura developer portal. singleTask + the data filter
+             route the browser redirect straight back into the app to finish the token exchange. -->
+        <activity
+            android:name=".oura.OAuthRedirectActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="com.earlyspark.orbn"
+                    android:host="oauth2redirect" />
             </intent-filter>
         </activity>
 

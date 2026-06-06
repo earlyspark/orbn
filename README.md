@@ -49,11 +49,12 @@ If the idea of a music player that actually knows how you're doing seems neat to
 
 ## Status
 
-🚧 **Early — it plays music, but the biometric part isn't wired up yet.** Works on real hardware: 
-your library is scanned and analyzed entirely on-device (tempo, key, energy, mood, genre),
-and orbn plays it back — hi-res to the iKKO's DAC when the case is attached. Still to come,
-milestone by milestone in the open: the Oura biometric integration, the body→music matching, and
-the full-screen visualizer.
+🚧 **Early — it plays music and can read your body, but the two aren't connected yet.** Works on
+real hardware: your library is scanned and analyzed entirely on-device (tempo, key, energy, mood,
+genre), and orbn plays it back — hi-res to the iKKO's DAC when the case is attached. The Oura
+integration is in too: connect your ring and orbn reads your recovery and heart rate into a single
+"how you are right now" signal. Still to come, milestone by milestone in the open: the body→music
+matching that turns that signal into a queue, and the full-screen visualizer.
 
 ## The device
 
@@ -84,6 +85,7 @@ Oura Ring ──► daily recovery + intra-day heart rate ──► "how you are
 - The Oura Web API for biometric data.
 - **Privacy by design:** everything runs locally. Your listening and biometric data stay on the
   device; orbn talks to the Oura API only to fetch *your own* data, and to nothing else.
+  See the [Privacy Policy](PRIVACY.md) for the full picture.
 
 ## Building
 
@@ -97,13 +99,29 @@ orbn is an Android app. You'll need Android Studio (or the Android SDK + NDK) an
 The native dependencies are large prebuilt binaries kept out of git; the script fetches them
 from a GitHub Release and unpacks them where the build expects.
 
-> More detailed setup (including how to connect your own Oura account) will be documented as those
-> parts of the app come together.
+### Connecting Oura
+
+To use the biometric features you supply your **own** Oura developer app credentials — orbn ships
+none. Register an application at [developer.ouraring.com/applications](https://developer.ouraring.com/applications)
+with the redirect URI `com.earlyspark.orbn://oauth2redirect`, then add the values to
+`local.properties` (which is gitignored and never committed):
+
+```properties
+OURA_CLIENT_ID=your_client_id
+OURA_CLIENT_SECRET=your_client_secret
+OURA_REDIRECT_URI=com.earlyspark.orbn://oauth2redirect
+```
+
+The build injects these into `BuildConfig` at compile time; they are never hardcoded in source.
+Without them the app still builds and plays music — it just shows "Oura: add credentials" instead
+of biometric data.
+
+> More detailed setup will be documented as the remaining parts of the app come together.
 
 ## Roadmap
 
-On-device music analysis → background tagging of your library → playback ✅ **— done so far** —
-→ **Oura integration (next)** → biometric matching → the reactive visualizer → polish.
+On-device music analysis → background tagging of your library → playback → Oura integration
+✅ **— done so far** — → **biometric matching (next)** → the reactive visualizer → polish.
 
 ## Author
 
