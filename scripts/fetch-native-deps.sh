@@ -8,7 +8,8 @@
 #   app/libs/essentia/        libessentia.a + headers (cross-compiled, arm64-v8a)
 #   app/libs/ort/include/     ONNX Runtime C/C++ headers
 #   app/libs/eigen/           Eigen 3.4.0 headers
-#   app/src/main/jniLibs/     libonnxruntime.so (arm64-v8a)
+#   app/libs/projectm/        projectM-4 headers + libs (MilkDrop-style visualizer)
+#   app/src/main/jniLibs/     libonnxruntime.so + libprojectM-4*.so (arm64-v8a)
 #   app/src/main/assets/models/   MusiCNN ONNX models
 #
 # Run this once after cloning, before building:
@@ -20,8 +21,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-VERSION="native-deps-v2"
-ASSET="orbn-native-deps-v2.tar.gz"
+VERSION="native-deps-v3"
+ASSET="orbn-native-deps-v3.tar.gz"
 URL="https://github.com/earlyspark/orbn/releases/download/${VERSION}/${ASSET}"
 
 # A sentinel file we expect to exist once deps are unpacked.
