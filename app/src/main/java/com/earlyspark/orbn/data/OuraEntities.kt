@@ -15,7 +15,8 @@ data class OuraDailyEntity(
     val sleepScore: Int? = null,
     val restingHr: Int? = null, // bpm — lowest HR overnight, used as HRR baseline
     val hrvMs: Int? = null, // average overnight HRV (rmssd-based), ms
-    val stressSummary: String? = null, // e.g. "restored" / "normal" / "stressful"
+    val metLatest: Float? = null, // most recent 1-min MET (daily_activity) — intra-day movement
+    val activityClass: Int? = null, // latest class_5_min: 0 non-wear..5 high activity
     val fetchedAt: Long,
 )
 

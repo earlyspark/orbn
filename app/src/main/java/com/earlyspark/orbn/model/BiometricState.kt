@@ -43,7 +43,6 @@ data class BiometricState(
         val restingHr: Int? = null,
         val latestHr: Int? = null,
         val hrvMs: Int? = null,
-        val stressSummary: String? = null,
         /** Heart-rate-reserve fraction: (latestHr − restingHr) / hrSpan, clamped 0..1. */
         val arousal: Float? = null,
         val note: String? = null,

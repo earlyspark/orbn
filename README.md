@@ -19,7 +19,7 @@ orbn is different on three counts:
 
 - **It plays *your* music** — the local files you own, not a streaming service.
 - **It understands how you are** — using your Oura Ring's overnight recovery/HRV as a daily
-  baseline, nudged by your heart rate through the day.
+  baseline, nudged by your heart rate and movement through the day.
 - **It runs entirely on the device** — analysis, matching, and visuals all happen locally on the
   MindOne. No cloud, no account, no data leaving the device.
 
@@ -51,7 +51,7 @@ If the idea of a music player that actually knows how you're doing seems neat to
 
 🚧 **Early, but the core loop works end to end: it reads your body, plays music to match, and
 visualizes it.** On real hardware, orbn scans and analyzes your library entirely on-device (tempo,
-key, energy, mood, genre), connects to your Oura Ring to read your recovery, heart rate, and stress
+key, energy, mood, genre), connects to your Oura Ring to read your recovery, heart rate, and movement
 into a "how you are right now" signal, and **builds a play queue that fits that signal** — sampled
 for variety, ordered to flow, and mindful of what you've recently played so it doesn't repeat. Pull
 down to re-tune the queue to right now. Now-playing is a **full-screen MilkDrop-style visualizer
@@ -73,7 +73,7 @@ inside — with the occasional check of your Oura data — rather than a phone-s
 ```
 your music files ──► on-device analysis (tempo / key / energy / mood / genre)
                                    │
-Oura Ring ──► daily recovery + intra-day heart rate ──► "how you are" right now
+Oura Ring ──► daily recovery + intra-day heart rate & movement ──► "how you are" right now
                                    │
                      match in a valence–energy space
                                    │

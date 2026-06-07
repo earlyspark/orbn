@@ -21,11 +21,14 @@ import kotlin.math.roundToInt
  * Normalization is per-person (D18), never absolute BPM:
  *  - **Daily baseline** comes from Oura's already-personalized readiness score → an energy center
  *    and band. Low recovery → lower, narrower (mirror, D14).
- *  - **Intra-day nudge** is heart-rate-reserve style: how far the current HR sits above the user's
- *    resting HR, scaled by a personal HR span. Raw bpm is never compared across people.
+ *  - **Intra-day activation** is the stronger of two live signals: heart-rate-reserve (how far the
+ *    current HR sits above resting, scaled by a personal HR span) and current movement (MET).
+ *    HRR is used (rather than raw bpm) so "elevated" means elevated *for this user* — relative to
+ *    their own resting HR — not against an arbitrary fixed threshold.
  *  - **Current HR** is the latest 5-min daytime sample, or — when more recent — the heart rate
  *    from a logged session (a higher-fidelity on-demand read).
- *  - High daily stress caps the energy (don't push a stressed body).
+ *  - Oura's daily stress is deliberately NOT used: the API exposes only a whole-day `day_summary`
+ *    (no intra-day stress), which can't track "now", so it isn't fetched or folded in at all.
  *
  * v1 (M4) uses a fixed HR-span estimate for the reserve denominator. It self-calibrates from the
  * user's own logged HR distribution (D12 play-history log) once the M5 matching work lands —
@@ -66,12 +69,16 @@ class OuraRepository(
             val readiness = api.getDailyReadiness(startDate, endDate).maxByOrNull { it.day ?: "" }
             val dailySleep = api.getDailySleep(startDate, endDate).maxByOrNull { it.day ?: "" }
             val sleep = api.getSleepPeriods(startDate, endDate).maxByOrNull { it.day ?: "" }
-            val stress = api.getDailyStress(startDate, endDate).maxByOrNull { it.day ?: "" }
             val heartRates = api.getHeartRate(startDateTime, endDateTime)
             val sessions = api.getSessions(startDate, endDate)
+            val activity = api.getDailyActivity(startDate, endDate).maxByOrNull { it.day ?: "" }
 
             val fetchedAt = System.currentTimeMillis()
             val day = readiness?.day ?: sleep?.day ?: dailySleep?.day ?: today.toString()
+
+            // Latest intra-day movement: most recent non-null MET sample + current 5-min activity class.
+            val metLatest = activity?.met?.items?.lastOrNull { it != null }?.toFloat()
+            val activityClass = activity?.class5Min?.lastOrNull { it.isDigit() }?.digitToIntOrNull()
 
             dao.upsertDaily(
                 listOf(
@@ -81,7 +88,8 @@ class OuraRepository(
                         sleepScore = dailySleep?.score,
                         restingHr = sleep?.lowestHeartRate,
                         hrvMs = sleep?.averageHrv,
-                        stressSummary = stress?.daySummary,
+                        metLatest = metLatest,
+                        activityClass = activityClass,
                         fetchedAt = fetchedAt,
                     )
                 )
@@ -165,25 +173,29 @@ class OuraRepository(
         // a calm breathing session reads low HR → calm music.
         val source = chooseHrSource(latestHr, latestSession)
 
-        // Intra-day arousal = heart-rate-reserve fraction above resting (D18).
+        // Intra-day activation = HR-leaning max of two live signals (D18): heart-rate-reserve above
+        // resting, and current movement (MET) weighted DOWN by MET_WEIGHT. Max (not sum) avoids
+        // double-counting during exercise and never misses activation; the HR lean follows the
+        // "non-metabolic heart rate" literature — HR elevated while still (stress/arousal) is the
+        // stronger cue and reads at full strength, while pure light movement reads a touch gentler.
         val restingHr = daily.restingHr
-        var arousal: Float? = null
-        var center = baseCenter
-        if (source != null && restingHr != null) {
+        val hrFrac = if (source != null && restingHr != null) {
             val span = (DEFAULT_MAX_HR - restingHr).coerceAtLeast(1)
-            val frac = ((source.bpm - restingHr).toFloat() / span).coerceIn(0f, 1f)
-            arousal = frac
-            center = (baseCenter + frac * AROUSAL_WEIGHT).coerceIn(0f, 1f)
+            ((source.bpm - restingHr).toFloat() / span).coerceIn(0f, 1f)
+        } else null
+        val metFrac = daily.metLatest?.let {
+            ((it - MET_REST) / (MET_VIGOROUS - MET_REST)).coerceIn(0f, 1f) * MET_WEIGHT
         }
+        val arousal = listOfNotNull(hrFrac, metFrac).maxOrNull()
+        var center = baseCenter
+        if (arousal != null) {
+            center = (baseCenter + arousal * AROUSAL_WEIGHT).coerceIn(0f, 1f)
+        }
+        val viaMovement = metFrac != null && metFrac == arousal && (hrFrac == null || metFrac > hrFrac)
 
-        // Stress is a HIGH-energy state (tense/keyed-up), NOT a calm one — so mirroring it pushes
-        // energy UP, not down (corrects the earlier mislabel; see F-finding / D14 stress handling).
-        // Floored so a stressful day lands energetic even when the resting HR is low. Valence stays
-        // free (D15) — sad music is low-energy, so a high target naturally squeezes it out.
-        val stressful = daily.stressSummary.equals("stressful", ignoreCase = true)
-        if (stressful) {
-            center = maxOf(center, STRESS_ENERGY_FLOOR)
-        }
+        // NOTE: Oura exposes no intra-day stress (only a whole-day `day_summary` — see the OpenAPI
+        // spec in docs/reference), so stress is not a signal here at all: a day-level label can't
+        // track "now" and would pin energy until midnight. HR + movement carry the live state.
 
         val syncedAt = source?.atMillis ?: daily.fetchedAt
         // Prefer the session's intra-session HRV when it's the source, else the overnight HRV.
@@ -200,11 +212,10 @@ class OuraRepository(
                 restingHr = restingHr,
                 latestHr = source?.bpm,
                 hrvMs = hrv,
-                stressSummary = daily.stressSummary,
                 arousal = arousal,
                 note = listOfNotNull(
                     if (source?.viaSession == true) "via session (${latestSession?.type ?: "?"})" else null,
-                    if (stressful) "stress → energy boosted" else null,
+                    if (viaMovement) "via movement (MET %.1f)".format(daily.metLatest) else null,
                 ).joinToString("; ").ifBlank { null },
             ),
         )
@@ -255,10 +266,13 @@ class OuraRepository(
         const val HR_WINDOW_HOURS = 6L
         /** Cold-start ceiling for the HRR denominator until the user's own HR history refines it (M5). */
         const val DEFAULT_MAX_HR = 190
-        /** Max upward energy shift from a fully elevated heart rate. */
+        /** Max upward energy shift from a fully elevated heart rate / movement. */
         const val AROUSAL_WEIGHT = 0.25f
-        /** Energy floor on high-stress days — stress is a keyed-up state, so mirror it energetic. */
-        const val STRESS_ENERGY_FLOOR = 0.75f
+        /** MET endpoints for mapping current movement to a 0..1 activation fraction. */
+        const val MET_REST = 1f       // ~sitting/quiet
+        const val MET_VIGOROUS = 8f   // brisk/vigorous activity → full activation
+        /** Movement's vote in the HR-leaning max: pure movement reads gentler than HR elevation. */
+        const val MET_WEIGHT = 0.6f
         val ISO: DateTimeFormatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME
     }
 }

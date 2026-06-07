@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OuraSessionEntity::class,
         PlayEventEntity::class,
     ],
-    version = 7,
+    version = 9,
     exportSchema = false,
 )
 abstract class OrbnDatabase : RoomDatabase() {
@@ -119,6 +119,49 @@ abstract class OrbnDatabase : RoomDatabase() {
             }
         }
 
+        /** v7 → v8 adds intra-day movement (latest MET + activity class) to the daily cache. Additive. */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `oura_daily` ADD COLUMN `metLatest` REAL")
+                db.execSQL("ALTER TABLE `oura_daily` ADD COLUMN `activityClass` INTEGER")
+            }
+        }
+
+        /**
+         * v8 → v9 drops the now-unused daily-stress column. SQLite's DROP COLUMN isn't available on
+         * older runtimes, so use the portable recreate-table pattern (create without the column,
+         * copy, swap). Preserves the cached daily rows.
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `oura_daily_new` (
+                        `day` TEXT NOT NULL,
+                        `readinessScore` INTEGER,
+                        `sleepScore` INTEGER,
+                        `restingHr` INTEGER,
+                        `hrvMs` INTEGER,
+                        `metLatest` REAL,
+                        `activityClass` INTEGER,
+                        `fetchedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`day`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `oura_daily_new`
+                        (`day`, `readinessScore`, `sleepScore`, `restingHr`, `hrvMs`, `metLatest`, `activityClass`, `fetchedAt`)
+                    SELECT `day`, `readinessScore`, `sleepScore`, `restingHr`, `hrvMs`, `metLatest`, `activityClass`, `fetchedAt`
+                    FROM `oura_daily`
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE `oura_daily`")
+                db.execSQL("ALTER TABLE `oura_daily_new` RENAME TO `oura_daily`")
+            }
+        }
+
         fun get(context: Context): OrbnDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -126,7 +169,9 @@ abstract class OrbnDatabase : RoomDatabase() {
                     OrbnDatabase::class.java,
                     "orbn.db"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(
+                        MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+                    )
                     // Backstop only: analysis data is reproducible from the audio files, so an
                     // unforeseen schema gap can safely rebuild + re-tag rather than crash.
                     .fallbackToDestructiveMigration()

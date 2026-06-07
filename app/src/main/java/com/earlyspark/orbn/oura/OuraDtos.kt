@@ -75,15 +75,6 @@ data class HeartRateSample(
     val timestamp: String? = null,
 )
 
-@Serializable
-data class DailyStress(
-    val id: String? = null,
-    val day: String? = null,
-    @SerialName("stress_high") val stressHigh: Int? = null,
-    @SerialName("recovery_high") val recoveryHigh: Int? = null,
-    @SerialName("day_summary") val daySummary: String? = null,
-)
-
 /**
  * A logged "Moment" (breathing / meditation / nap / rest) the user started in the Oura app.
  * Unlike the coarse 5-min daytime heart rate, a session carries true [heartRate] and
@@ -111,4 +102,17 @@ data class SampleData(
     val interval: Double? = null,
     val items: List<Double?> = emptyList(),
     val timestamp: String? = null,
+)
+
+/**
+ * Daily activity — a day-level summary that also carries genuine intra-day movement: [met] is a
+ * ~1-min MET (metabolic-equivalent) time series, and [class5Min] is a string of per-5-min activity
+ * classes (0 non-wear .. 5 high). The latest MET is orbn's closest-to-realtime movement signal.
+ */
+@Serializable
+data class DailyActivity(
+    val day: String? = null,
+    val steps: Int? = null,
+    @SerialName("class_5_min") val class5Min: String? = null,
+    val met: SampleData? = null,
 )

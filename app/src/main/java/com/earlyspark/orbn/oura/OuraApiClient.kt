@@ -128,11 +128,11 @@ class OuraApiClient(
     fun getSleepPeriods(startDate: String, endDate: String): List<SleepPeriod> =
         getCollection("sleep", "start_date" to startDate, "end_date" to endDate)
 
-    fun getDailyStress(startDate: String, endDate: String): List<DailyStress> =
-        getCollection("daily_stress", "start_date" to startDate, "end_date" to endDate)
-
     fun getSessions(startDate: String, endDate: String): List<Session> =
         getCollection("session", "start_date" to startDate, "end_date" to endDate)
+
+    fun getDailyActivity(startDate: String, endDate: String): List<DailyActivity> =
+        getCollection("daily_activity", "start_date" to startDate, "end_date" to endDate)
 
     fun getHeartRate(startDateTime: String, endDateTime: String): List<HeartRateSample> =
         getCollection(
