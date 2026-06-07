@@ -51,11 +51,11 @@ If the idea of a music player that actually knows how you're doing seems neat to
 
 🚧 **Early, but the core loop works: it reads your body and plays music to match.** On real
 hardware, orbn scans and analyzes your library entirely on-device (tempo, key, energy, mood, genre),
-connects to your Oura Ring to read your recovery and heart rate into a "how you are right now"
-signal, and **builds a play queue that fits that signal** — sampled for variety, ordered to flow,
-and mindful of what you've recently played so it doesn't repeat. Plays back hi-res to the iKKO's
-DAC when the case is attached. Still to come, in the open: the full-screen reactive visualizer, a manual mood picker,
-and a lot of polish.
+connects to your Oura Ring to read your recovery, heart rate, and stress into a "how you are right
+now" signal, and **builds a play queue that fits that signal** — sampled for variety, ordered to
+flow, and mindful of what you've recently played so it doesn't repeat. Pull down to re-tune the
+queue to right now. Plays back hi-res to the iKKO's DAC when the case is attached. Still to come, in
+the open: the full-screen reactive visualizer, a manual mood picker, and a lot of polish.
 
 ## The device
 
