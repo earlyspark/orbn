@@ -6,13 +6,14 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
- * The one-line biometric status string (`energy 0.65 · readiness 81 · synced 2:56 PM`), shown on the
- * home screen AND in the visualizer — kept in one place so the two never drift.
+ * The one-line biometric status string, shown on the home screen AND in the visualizer — kept in one
+ * place so the two never drift. Plain language (D24): `feeling balanced · well recovered · synced
+ * 2:56 PM`, not raw numbers. The raw energy/valence numbers live only in the "why this track" detail.
  */
 fun biometricReadout(state: BiometricState?): String {
     if (state == null) return "Oura connected · tap to sync"
-    val energy = "energy %.2f".format(state.energyCenter)
-    val readiness = state.diagnostics.readinessScore?.let { "readiness $it" }
+    val energy = "feeling ${energyWord(state.energyCenter)}"
+    val readiness = readinessWord(state.diagnostics.readinessScore)
     val synced = state.syncedAt?.let { "synced ${syncedAtLabel(it)}" }
     return listOfNotNull(energy, readiness, synced).joinToString("  ·  ")
 }

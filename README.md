@@ -54,10 +54,11 @@ visualizes it.** On real hardware, orbn scans and analyzes your library entirely
 key, energy, mood, genre), connects to your Oura Ring to read your recovery, heart rate, and movement
 into a "how you are right now" signal, and **builds a play queue that fits that signal** — sampled
 for variety, ordered to flow, and mindful of what you've recently played so it doesn't repeat. Pull
-down to re-tune the queue to right now. Now-playing is a **full-screen MilkDrop-style visualizer
-(projectM) that reacts to the live audio** — tap to play/pause, double-tap to change the visual
-(a library of presets you cycle through), long-press to exit. Plays back hi-res to the iKKO's DAC
-when the case is attached. Still to come, in the open: a manual mood picker and a lot of polish.
+down to re-tune the queue to right now, or **swipe to set a mood** (happy, chill, sad, excited…) when
+you want to override what your body says and pick the feel yourself. Now-playing is a **full-screen
+MilkDrop-style visualizer (projectM) that reacts to the live audio** — tap to play/pause, double-tap to
+change the visual (a library of presets you cycle through), long-press to exit. Plays back hi-res to the
+iKKO's DAC when the case is attached. Still in the open: more UI polish.
 
 ## The device
 
@@ -155,8 +156,8 @@ one, delete its `.milk` file from `app/src/main/assets/presets/` and rebuild.
 ## Roadmap
 
 On-device music analysis → background tagging of your library → playback → Oura integration →
-biometric matching → the full-screen reactive visualizer ✅ **— done so far** — →
-**a manual mood picker + UI polish (next)** → more.
+biometric matching → the full-screen reactive visualizer → a manual mood picker ✅ **— done so far**
+— → **more UI polish (next)** → more.
 
 ## Author
 

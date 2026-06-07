@@ -19,8 +19,9 @@ import kotlin.math.roundToInt
  * target for the matching engine. Network calls run on [Dispatchers.IO].
  *
  * Normalization is per-person (D18), never absolute BPM:
- *  - **Daily baseline** comes from Oura's already-personalized readiness score → an energy center
- *    and band. Low recovery → lower, narrower (mirror, D14).
+ *  - **Energy center mirrors live arousal** (D14): calm body → calm music. Readiness (recovery) is
+ *    *capacity*, a different axis, so it sets only the *band* (how wide a range to roam) — being
+ *    well-recovered no longer reads as "high energy" while you're at rest (SPEC §13).
  *  - **Intra-day activation** is the stronger of two live signals: heart-rate-reserve (how far the
  *    current HR sits above resting, scaled by a personal HR span) and current movement (MET).
  *    HRR is used (rather than raw bpm) so "elevated" means elevated *for this user* — relative to
@@ -155,17 +156,16 @@ class OuraRepository(
         latestHr: OuraHeartRateEntity?,
         latestSession: OuraSessionEntity?,
     ): BiometricState {
-        // Daily baseline from readiness (mirror, D14). Missing → neutral.
+        // Readiness sets the BAND only (capacity = how wide a range to roam), NOT the center: being
+        // well-recovered shouldn't read as "high energy" when you're calm — the center mirrors live
+        // arousal below (D14 mirror; readiness is capacity, a different axis — SPEC §13). Well-
+        // recovered → a wider band (room to range); depleted → narrow (keep it gentle). Missing → mid.
         val readiness = daily.readinessScore
-        val baseCenter: Float
-        val baseBand: Float
-        if (readiness != null) {
+        val baseBand: Float = if (readiness != null) {
             val r = readiness.coerceIn(0, 100) / 100f
-            baseCenter = 0.25f + r * 0.45f // 0.25 (depleted) .. 0.70 (fully recovered)
-            baseBand = 0.12f + r * 0.18f   // 0.12 (narrow) .. 0.30 (wide)
+            0.12f + r * 0.18f   // 0.12 (narrow, depleted) .. 0.30 (wide, fully recovered)
         } else {
-            baseCenter = 0.5f
-            baseBand = 0.25f
+            0.25f
         }
 
         // Choose the current-HR source: the latest 5-min sample, or a session's heart rate when
@@ -187,9 +187,13 @@ class OuraRepository(
             ((it - MET_REST) / (MET_VIGOROUS - MET_REST)).coerceIn(0f, 1f) * MET_WEIGHT
         }
         val arousal = listOfNotNull(hrFrac, metFrac).maxOrNull()
-        var center = baseCenter
-        if (arousal != null) {
-            center = (baseCenter + arousal * AROUSAL_WEIGHT).coerceIn(0f, 1f)
+        // Center MIRRORS current arousal (D14): calm body → calm music, no matter how recovered.
+        // Resting (HR at rest, no movement) → a calm-but-awake baseline; rising HR/movement lifts it.
+        // No live signal at all → a neutral center.
+        val center = if (arousal != null) {
+            (RESTING_CENTER + arousal * AROUSAL_SPAN).coerceIn(0f, 1f)
+        } else {
+            0.5f
         }
         val viaMovement = metFrac != null && metFrac == arousal && (hrFrac == null || metFrac > hrFrac)
 
@@ -267,7 +271,8 @@ class OuraRepository(
         /** Cold-start ceiling for the HRR denominator until the user's own HR history refines it (M5). */
         const val DEFAULT_MAX_HR = 190
         /** Max upward energy shift from a fully elevated heart rate / movement. */
-        const val AROUSAL_WEIGHT = 0.25f
+        const val RESTING_CENTER = 0.30f // energy center at rest (no arousal) — calm but awake
+        const val AROUSAL_SPAN = 0.55f   // how far live arousal lifts the center (0.30 .. 0.85)
         /** MET endpoints for mapping current movement to a 0..1 activation fraction. */
         const val MET_REST = 1f       // ~sitting/quiet
         const val MET_VIGOROUS = 8f   // brisk/vigorous activity → full activation

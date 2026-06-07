@@ -80,6 +80,12 @@ object Matcher {
         val sigma = t.energyBand.coerceAtLeast(MIN_SIGMA)
         var w = gaussian(c.point.energy, t.energyCenter, sigma)
         t.valenceCenter?.let { w *= gaussian(c.point.valence, it, VALENCE_SIGMA) }
+        // Soft instrumental lean (Chill mood): favor lyric-less tracks without excluding vocals.
+        // Vocal tracks keep (1 - bias) of their weight; instrumental keep full. No-op when bias = 0
+        // or instrumentalness is unknown (track not yet analyzed for it).
+        if (t.instrumentalBias > 0f && c.instrumental != null) {
+            w *= (1f - t.instrumentalBias) + t.instrumentalBias * c.instrumental
+        }
         return w
     }
 

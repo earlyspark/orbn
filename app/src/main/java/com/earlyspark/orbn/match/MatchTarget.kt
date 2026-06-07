@@ -10,12 +10,15 @@ import com.earlyspark.orbn.model.BiometricState
  * @property energyBand     Half-width / spread of the acceptable energy zone (Gaussian σ).
  * @property valenceCenter  Target valence, or null when valence is FREE (D15 — the Oura case).
  * @property instrumentalMin Minimum instrumentalness, or null for no gate (set by functional moods, D17).
+ * @property instrumentalBias Soft lean toward lyric-less tracks (0 = none; >0 favors instrumental
+ *                            without excluding vocals — used by the Chill mood, distinct from the gate).
  */
 data class MatchTarget(
     val energyCenter: Float,
     val energyBand: Float,
     val valenceCenter: Float? = null,
     val instrumentalMin: Float? = null,
+    val instrumentalBias: Float = 0f,
 ) {
     companion object {
         /** Neutral, fairly wide target when there's no Oura data and no manual mood (D17 fallback). */
