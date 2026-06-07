@@ -55,9 +55,9 @@ key, energy, mood, genre), connects to your Oura Ring to read your recovery, hea
 into a "how you are right now" signal, and **builds a play queue that fits that signal** — sampled
 for variety, ordered to flow, and mindful of what you've recently played so it doesn't repeat. Pull
 down to re-tune the queue to right now. Now-playing is a **full-screen MilkDrop-style visualizer
-(projectM) that reacts to the live audio** — tap to play/pause, long-press to exit. Plays back
-hi-res to the iKKO's DAC when the case is attached. Still to come, in the open: theming the visuals
-to your biometric state, a manual mood picker, and a lot of polish.
+(projectM) that reacts to the live audio** — tap to play/pause, double-tap to change the visual
+(a library of presets you cycle through), long-press to exit. Plays back hi-res to the iKKO's DAC
+when the case is attached. Still to come, in the open: a manual mood picker and a lot of polish.
 
 ## The device
 
@@ -130,7 +130,7 @@ only see data from the last time you manually opened Oura.
 
 On-device music analysis → background tagging of your library → playback → Oura integration →
 biometric matching → the full-screen reactive visualizer ✅ **— done so far** — →
-**biometric-themed visuals + a manual mood picker (next)** → polish.
+**a manual mood picker + UI polish (next)** → more.
 
 ## Author
 
@@ -149,4 +149,7 @@ Copyright © 2026 RayAna ([@earlyspark](https://github.com/earlyspark)).
 
 Standing on the shoulders of open source — including [Essentia](https://essentia.upf.edu/)
 (audio analysis), [ONNX Runtime](https://onnxruntime.ai/) (on-device inference), and
-[projectM](https://github.com/projectM-visualizer/projectm) (MilkDrop-style visuals).
+[projectM](https://github.com/projectM-visualizer/projectm) (MilkDrop-style visuals). The bundled
+visualizer presets are a curated subset of projectM's
+[Cream of the Crop](https://github.com/projectM-visualizer/presets-cream-of-the-crop) pack
+(community MilkDrop presets).

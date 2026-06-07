@@ -58,6 +58,19 @@ Java_com_earlyspark_orbn_visualizer_NativeVisualizer_nativeResize(
     }
 }
 
+// Switch presets at runtime (double-tap in the UI). `true` = smooth blend into the new preset.
+JNIEXPORT void JNICALL
+Java_com_earlyspark_orbn_visualizer_NativeVisualizer_nativeLoadPreset(
+        JNIEnv* env, jobject /*thiz*/, jstring jPresetPath) {
+    if (g_pm == nullptr) return;
+    const char* path = env->GetStringUTFChars(jPresetPath, nullptr);
+    if (path != nullptr && path[0] != '\0') {
+        projectm_load_preset_file(g_pm, path, true);
+        LOGI("switched preset: %s", path);
+    }
+    if (path != nullptr) env->ReleaseStringUTFChars(jPresetPath, path);
+}
+
 // Feed decoded mono PCM (from the live audio tap) into projectM's analysis buffer. Called on the
 // GL thread, just before nativeRenderFrame, with whatever the renderer pulled from AudioTap.
 JNIEXPORT void JNICALL

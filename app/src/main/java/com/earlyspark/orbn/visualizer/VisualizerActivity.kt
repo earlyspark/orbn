@@ -5,28 +5,49 @@ import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.util.Log
+import android.view.Gravity
 import android.view.MotionEvent
+import android.view.ViewConfiguration
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.earlyspark.orbn.model.biometricReadout
+import com.earlyspark.orbn.oura.Oura
 import com.earlyspark.orbn.playback.PlaybackService
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * Full-screen projectM visualizer (M6 spike, P2). Standalone activity, launched from the home
- * screen (long-press the orb) — kept separate from MainActivity while projectM is unproven.
+ * Full-screen projectM visualizer (M6 spike). Standalone activity, launched from the home screen
+ * (long-press the orb) — kept separate from MainActivity while projectM is unproven.
  *
- * Gestures (kept consistent with the home orb so the same touch works in both places):
+ * Gestures:
  *  - single tap: play / pause the current track
- *  - long press: exit back to home (matches "long-press to enter the viz" from home)
+ *  - double tap: switch to the next visualization preset
+ *  - long press: exit back to home
  *  - system back gesture: also exits
  *
- * P3 wires the live ExoPlayer tap into the renderer (audio-reactive visuals). The real
- * "visualizer is the home screen" integration is M6 proper.
+ * (Single-tap is confirmed only after the double-tap window passes, so play/pause lands ~300ms after
+ * the tap — the cost of having double-tap on the same surface.)
+ *
+ * The status/nav bars are hidden (immersive), and the screen is kept awake only while a track is
+ * actually playing — paused viz, or the home screen, sleep normally.
  */
 class VisualizerActivity : ComponentActivity() {
 
@@ -34,24 +55,43 @@ class VisualizerActivity : ComponentActivity() {
     private lateinit var renderer: VisualizerRenderer
     private var controller: MediaController? = null
     private var controllerFuture: ListenableFuture<MediaController>? = null
+
+    private var presetPaths: List<String> = emptyList()
+    private var presetIndex: Int = 0
+    private val vizPrefs by lazy { getSharedPreferences("orbn_viz", MODE_PRIVATE) }
+    private lateinit var presetLabel: TextView
+    private lateinit var statusBox: LinearLayout
+    private lateinit var trackLine: TextView
+    private lateinit var bioLine: TextView
+
     private var downAtMs: Long = 0L
     private var longPressFired: Boolean = false
+    private var lastTapUpAtMs: Long = 0L
+    private val handler = Handler(Looper.getMainLooper())
+    private val singleTapRunnable = Runnable { togglePlayPause() }
+    private val longPressRunnable = Runnable {
+        Log.d(TAG, "long-press → exit viz")
+        longPressFired = true
+        finish()
+    }
+
+    /** Keeps the screen awake while playing, and shows the now-playing/biometric lines while paused. */
+    private val playerListener = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            updateKeepScreenOn(isPlaying)
+            updateStatusOverlay(isPlaying)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val presetPath = copyPresetToFiles()
-        renderer = VisualizerRenderer(presetPath)
+        presetPaths = copyPresetsToFiles()
+        presetIndex = restorePresetIndex() // resume the preset from last time
+        renderer = VisualizerRenderer(presetPaths.getOrNull(presetIndex) ?: "")
 
-        // Explicit gesture timing (not GestureDetector, whose 500ms long-press is too short for a
-        // deliberate "press to switch modes" — a normal tap held ~500ms misfires as long-press).
-        val handler = Handler(Looper.getMainLooper())
-        val longPressRunnable = Runnable {
-            Log.d(TAG, "long-press → exit viz")
-            longPressFired = true
-            finish()
-        }
+        val doubleTapMs = ViewConfiguration.getDoubleTapTimeout().toLong()
 
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(3)
@@ -65,32 +105,80 @@ class VisualizerActivity : ComponentActivity() {
                         handler.postDelayed(longPressRunnable, LONG_PRESS_MS)
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        // Any meaningful drag cancels both gestures.
+                        // Any meaningful drag cancels the pending gestures.
                         if (kotlin.math.abs(ev.x - ev.getX(0)) > SLOP || kotlin.math.abs(ev.y - ev.getY(0)) > SLOP) {
                             handler.removeCallbacks(longPressRunnable)
+                            handler.removeCallbacks(singleTapRunnable)
                         }
                     }
                     MotionEvent.ACTION_UP -> {
                         handler.removeCallbacks(longPressRunnable)
                         val held = ev.eventTime - downAtMs
                         if (!longPressFired && held <= TAP_MAX_MS) {
-                            Log.d(TAG, "tap (${held}ms) → toggle play/pause")
-                            togglePlayPause()
+                            if (ev.eventTime - lastTapUpAtMs <= doubleTapMs) {
+                                // Second tap within the window → double tap: switch preset.
+                                handler.removeCallbacks(singleTapRunnable)
+                                lastTapUpAtMs = 0L
+                                nextPreset()
+                            } else {
+                                // First tap → wait out the double-tap window before play/pause.
+                                lastTapUpAtMs = ev.eventTime
+                                handler.postDelayed(singleTapRunnable, doubleTapMs)
+                            }
                         }
                         v.performClick()
                     }
-                    MotionEvent.ACTION_CANCEL -> handler.removeCallbacks(longPressRunnable)
+                    MotionEvent.ACTION_CANCEL -> {
+                        handler.removeCallbacks(longPressRunnable)
+                        handler.removeCallbacks(singleTapRunnable)
+                    }
                 }
                 true
             }
         }
-        setContentView(glView)
-
+        presetLabel = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 11f
+            setShadowLayer(6f, 0f, 0f, Color.BLACK) // legible over any preset
+            setPadding(32, 16, 32, 16)
+            background = GradientDrawable().apply {
+                cornerRadius = 28f
+                setColor(0x99000000.toInt())
+            }
+            alpha = 0f
+        }
+        statusBox = buildStatusBox()
+        val root = FrameLayout(this).apply {
+            addView(
+                glView,
+                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+            )
+            addView(
+                statusBox,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply { gravity = Gravity.CENTER },
+            )
+            addView(
+                presetLabel,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    gravity = Gravity.BOTTOM or Gravity.START
+                    leftMargin = 40
+                    bottomMargin = 100
+                },
+            )
+        }
+        setContentView(root)
+        hideSystemBars()
+        showPresetLabel(presetPaths.getOrNull(presetIndex)) // announce the preset we resumed on
         connectController()
     }
 
     override fun onResume() {
         super.onResume()
+        hideSystemBars() // bars can reappear after some system interactions
         glView.onResume()
     }
 
@@ -103,19 +191,81 @@ class VisualizerActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(singleTapRunnable)
+        handler.removeCallbacks(longPressRunnable)
+        controller?.removeListener(playerListener)
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controller = null
         controllerFuture = null
         super.onDestroy()
     }
 
-    /** Connect to the running PlaybackService so single-tap can toggle play/pause. */
+    /** Hide the status + navigation bars (immersive); a swipe from an edge reveals them transiently. */
+    private fun hideSystemBars() {
+        WindowCompat.getInsetsController(window, glView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    private fun updateKeepScreenOn(on: Boolean) {
+        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    /** The paused-state overlay: now-playing line + the shared biometric readout (no "orbn" title). */
+    private fun buildStatusBox(): LinearLayout {
+        trackLine = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setShadowLayer(8f, 0f, 0f, Color.BLACK)
+        }
+        bioLine = TextView(this).apply {
+            setTextColor(0xFF7FB0FF.toInt()) // soft blue, matching the home readout accent
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setShadowLayer(8f, 0f, 0f, Color.BLACK)
+            setPadding(0, 14, 0, 0)
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(48, 0, 48, 0)
+            addView(trackLine)
+            addView(bioLine)
+            alpha = 0f
+        }
+    }
+
+    /** Paused → show the now-playing + biometric lines (persistent). Playing → fade them out. */
+    private fun updateStatusOverlay(isPlaying: Boolean) {
+        if (isPlaying) {
+            statusBox.animate().alpha(0f).setDuration(400L).start()
+            return
+        }
+        val track = controller?.currentMediaItem?.mediaMetadata?.title?.toString()
+        trackLine.text = track?.let { "paused · $it" } ?: "paused"
+        lifecycleScope.launch {
+            val state = runCatching { Oura.repository(this@VisualizerActivity).currentState() }.getOrNull()
+            bioLine.text = biometricReadout(state)
+        }
+        statusBox.animate().cancel()
+        statusBox.animate().alpha(1f).setDuration(300L).start()
+    }
+
+    /** Connect to the running PlaybackService so taps can drive playback + keep-awake tracks state. */
     private fun connectController() {
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         val future = MediaController.Builder(this, token).buildAsync()
         controllerFuture = future
         future.addListener({
             controller = runCatching { future.get() }.getOrNull()
+            controller?.let {
+                it.addListener(playerListener)
+                updateKeepScreenOn(it.isPlaying)
+                updateStatusOverlay(it.isPlaying)
+            }
         }, MoreExecutors.directExecutor())
     }
 
@@ -124,22 +274,52 @@ class VisualizerActivity : ComponentActivity() {
         if (c.isPlaying) c.pause() else c.play()
     }
 
+    /** Advance to the next bundled preset (wraps), and remember it for next time. Loaded on the GL thread. */
+    private fun nextPreset() {
+        if (presetPaths.isEmpty()) return
+        presetIndex = (presetIndex + 1) % presetPaths.size
+        val path = presetPaths[presetIndex]
+        vizPrefs.edit().putString(KEY_PRESET, File(path).name).apply()
+        showPresetLabel(path)
+        Log.d(TAG, "double-tap → preset ${presetIndex + 1}/${presetPaths.size}")
+        glView.queueEvent { renderer.loadPreset(path) }
+    }
+
+    /** Briefly show the current preset's filename (for spotting/curating duds), then fade out. */
+    private fun showPresetLabel(path: String?) {
+        val name = path?.let { File(it).name.removeSuffix(".milk") } ?: return
+        presetLabel.text = name
+        presetLabel.animate().cancel()
+        presetLabel.alpha = 1f
+        presetLabel.animate().alpha(0f).setStartDelay(2000L).setDuration(600L).start()
+    }
+
+    /** Restore the last-used preset by name (stable across re-entry and pack changes); 0 if none/unknown. */
+    private fun restorePresetIndex(): Int {
+        val name = vizPrefs.getString(KEY_PRESET, null) ?: return 0
+        return presetPaths.indexOfFirst { File(it).name == name }.takeIf { it >= 0 } ?: 0
+    }
+
+    /** Copy every bundled `.milk` preset out of assets to real file paths projectM can load. */
+    private fun copyPresetsToFiles(): List<String> {
+        val dir = File(filesDir, "presets").apply { mkdirs() }
+        val names = assets.list("presets")?.filter { it.endsWith(".milk") }?.sorted() ?: emptyList()
+        return names.map { name ->
+            val out = File(dir, name)
+            assets.open("presets/$name").use { input -> out.outputStream().use { input.copyTo(it) } }
+            out.absolutePath
+        }
+    }
+
     private companion object {
         const val TAG = "OrbnViz"
+        /** SharedPreferences key: name of the last-viewed preset, so it persists across re-entry. */
+        const val KEY_PRESET = "preset"
         /** Max press duration that still counts as a tap. */
         const val TAP_MAX_MS = 250L
         /** Hold this long to trigger long-press (exit). Tuned generous so a tap never misfires. */
         const val LONG_PRESS_MS = 700L
-        /** Drag pixels that invalidate both gestures. */
+        /** Drag pixels that invalidate the pending gestures. */
         const val SLOP = 24f
-    }
-
-    /** Copy a bundled preset out of assets to a real file path projectM can load. */
-    private fun copyPresetToFiles(): String {
-        val out = File(filesDir, "preset.milk")
-        assets.open("presets/211-wave.milk").use { input ->
-            out.outputStream().use { input.copyTo(it) }
-        }
-        return out.absolutePath
     }
 }

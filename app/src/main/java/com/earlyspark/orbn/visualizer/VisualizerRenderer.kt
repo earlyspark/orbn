@@ -35,6 +35,11 @@ class VisualizerRenderer(private val presetPath: String) : GLSurfaceView.Rendere
         NativeVisualizer.nativeRenderFrame()
     }
 
+    /** Switch presets. Call from GLSurfaceView.queueEvent (runs on the GL thread). No-op pre-init. */
+    fun loadPreset(path: String) {
+        if (initialized) NativeVisualizer.nativeLoadPreset(path)
+    }
+
     /** Call from GLSurfaceView.queueEvent so it runs on the GL thread with the context current. */
     fun destroyOnGlThread() {
         NativeVisualizer.nativeDestroy()
