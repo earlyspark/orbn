@@ -28,6 +28,10 @@ class VisualizerRenderer(private val presetPath: String) : GLSurfaceView.Rendere
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        // Feed the latest decoded audio chunk (if any arrived since the last frame), then render.
+        // No chunk → projectM keeps its buffer and the visuals settle, which is what we want when
+        // playback is paused.
+        AudioTap.take()?.let { pcm -> NativeVisualizer.nativeAddPcm(pcm, pcm.size) }
         NativeVisualizer.nativeRenderFrame()
     }
 

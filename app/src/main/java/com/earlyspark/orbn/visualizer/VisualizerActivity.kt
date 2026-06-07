@@ -98,6 +98,7 @@ class VisualizerActivity : ComponentActivity() {
         // Tear projectM down on the GL thread (context still current) before pausing rendering.
         glView.queueEvent { renderer.destroyOnGlThread() }
         glView.onPause()
+        AudioTap.clear() // drop any buffered chunk so it doesn't linger into the next session
         super.onPause()
     }
 

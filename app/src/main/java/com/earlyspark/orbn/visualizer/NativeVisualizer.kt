@@ -13,6 +13,8 @@ object NativeVisualizer {
 
     external fun nativeInit(presetPath: String, width: Int, height: Int)
     external fun nativeResize(width: Int, height: Int)
+    /** Feed decoded mono PCM (from the live audio tap) into projectM before rendering. */
+    external fun nativeAddPcm(samples: FloatArray, count: Int)
     external fun nativeRenderFrame()
     external fun nativeDestroy()
 }

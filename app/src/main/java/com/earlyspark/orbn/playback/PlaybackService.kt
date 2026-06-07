@@ -1,20 +1,29 @@
 package com.earlyspark.orbn.playback
 
+import android.content.Context
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.earlyspark.orbn.data.OrbnDatabase
 import com.earlyspark.orbn.data.PlayEventEntity
 import com.earlyspark.orbn.oura.Oura
+import com.earlyspark.orbn.visualizer.AudioTap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.UUID
 
 /**
@@ -41,6 +50,40 @@ class PlaybackService : MediaSessionService() {
     private var currentId: String? = null
     private var loggedCurrent = false
 
+    /**
+     * Taps the decoded PCM as it flows to the audio device, downmixes to mono float, and hands it
+     * to [AudioTap] for the visualizer (P3). Transparent — TeeAudioProcessor copies the audio
+     * without altering it, so the native-rate/gapless output path (D11) is unaffected.
+     */
+    private val audioBufferSink = object : TeeAudioProcessor.AudioBufferSink {
+        private var channelCount = 2
+        private var encoding = C.ENCODING_PCM_16BIT
+
+        override fun flush(sampleRateHz: Int, channelCount: Int, encoding: Int) {
+            this.channelCount = channelCount.coerceAtLeast(1)
+            this.encoding = encoding
+        }
+
+        override fun handleBuffer(buffer: ByteBuffer) {
+            val ch = channelCount
+            val bytesPerSample = if (encoding == C.ENCODING_PCM_FLOAT) 4 else 2
+            // Only 16-bit and float PCM are handled; skip exotic encodings rather than misread them.
+            if (encoding != C.ENCODING_PCM_FLOAT && encoding != C.ENCODING_PCM_16BIT) return
+            val src = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            val frames = src.remaining() / (bytesPerSample * ch)
+            if (frames <= 0) return
+            val mono = FloatArray(frames)
+            for (f in 0 until frames) {
+                var sum = 0f
+                for (c in 0 until ch) {
+                    sum += if (encoding == C.ENCODING_PCM_FLOAT) src.float else src.short / 32768f
+                }
+                mono[f] = sum / ch
+            }
+            AudioTap.submit(mono)
+        }
+    }
+
     private val logListener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             // A manual skip (seek to next/prev or tapping a track) departs the current track early.
@@ -65,7 +108,19 @@ class PlaybackService : MediaSessionService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
-        val player = ExoPlayer.Builder(this)
+        // Renderers factory that inserts the visualizer audio tap into the sink's processor chain.
+        val renderersFactory = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink = DefaultAudioSink.Builder(context)
+                .setEnableFloatOutput(enableFloatOutput)
+                .setAudioProcessors(arrayOf<AudioProcessor>(TeeAudioProcessor(audioBufferSink)))
+                .build()
+        }
+
+        val player = ExoPlayer.Builder(this, renderersFactory)
             // Route as music + cooperate with system audio focus (pause on calls/other apps).
             .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
             // Pause when headphones/DAC are unplugged instead of blasting the speaker.

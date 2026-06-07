@@ -4,13 +4,12 @@
 // context (the GLSurfaceView renderer guarantees this) — projectm_create() initialises projectM's
 // GL function resolver from the current context, and rendering targets the bound framebuffer.
 //
-// P2 feeds a synthesized waveform (dummy PCM) so the visuals are visibly reactive without real
-// audio; P3 swaps in the live ExoPlayer PCM tap.
+// P3: live ExoPlayer PCM (tapped via a TeeAudioProcessor in PlaybackService, handed across the
+// AudioTap bridge) drives the visuals. nativeAddPcm() feeds projectM the decoded mono samples;
+// when nothing is playing no PCM arrives and projectM's analysis naturally settles.
 
 #include <jni.h>
 #include <android/log.h>
-#include <cmath>
-#include <cstdlib>
 
 #include "projectM-4/projectM.h"
 
@@ -21,7 +20,6 @@
 namespace {
 // Single instance for the spike (one visualizer surface at a time).
 projectm_handle g_pm = nullptr;
-double g_phase = 0.0;
 }  // namespace
 
 extern "C" {
@@ -60,23 +58,23 @@ Java_com_earlyspark_orbn_visualizer_NativeVisualizer_nativeResize(
     }
 }
 
+// Feed decoded mono PCM (from the live audio tap) into projectM's analysis buffer. Called on the
+// GL thread, just before nativeRenderFrame, with whatever the renderer pulled from AudioTap.
+JNIEXPORT void JNICALL
+Java_com_earlyspark_orbn_visualizer_NativeVisualizer_nativeAddPcm(
+        JNIEnv* env, jobject /*thiz*/, jfloatArray jpcm, jint count) {
+    if (g_pm == nullptr || jpcm == nullptr || count <= 0) return;
+    jfloat* data = env->GetFloatArrayElements(jpcm, nullptr);
+    if (data != nullptr) {
+        projectm_pcm_add_float(g_pm, data, static_cast<unsigned int>(count), PROJECTM_MONO);
+        env->ReleaseFloatArrayElements(jpcm, data, JNI_ABORT);  // read-only; don't copy back
+    }
+}
+
 JNIEXPORT void JNICALL
 Java_com_earlyspark_orbn_visualizer_NativeVisualizer_nativeRenderFrame(
         JNIEnv* /*env*/, jobject /*thiz*/) {
     if (g_pm == nullptr) return;
-
-    // Dummy PCM: a drifting multi-tone wave + a little noise, so the preset visibly reacts.
-    // (P3 replaces this with the live decoded audio from ExoPlayer.)
-    constexpr unsigned int kSamples = 512;
-    static float buf[kSamples];
-    for (unsigned int i = 0; i < kSamples; ++i) {
-        const double t = g_phase + i * 0.05;
-        const double noise = (std::rand() % 1000) / 1000.0 - 0.5;
-        buf[i] = static_cast<float>(0.5 * std::sin(t) + 0.3 * std::sin(t * 2.7) + 0.1 * noise);
-    }
-    g_phase += 0.3;
-
-    projectm_pcm_add_float(g_pm, buf, kSamples, PROJECTM_MONO);
     projectm_opengl_render_frame(g_pm);
 }
 
