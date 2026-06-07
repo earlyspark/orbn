@@ -50,6 +50,12 @@
             </intent-filter>
         </activity>
 
+        <!-- projectM visualizer (M6 spike). Launched from the home screen; not exported. -->
+        <activity
+            android:name=".visualizer.VisualizerActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Orbn" />
+
         <!-- Media3 playback service: hosts ExoPlayer + MediaSession for background/lock-screen. -->
         <service
             android:name=".playback.PlaybackService"

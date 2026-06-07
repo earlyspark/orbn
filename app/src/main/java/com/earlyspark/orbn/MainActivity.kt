@@ -1,6 +1,7 @@
 package com.earlyspark.orbn
 
 import android.content.ComponentName
+import android.content.Intent
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -19,8 +20,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -73,6 +76,7 @@ import com.earlyspark.orbn.oura.OuraAuthManager
 import com.earlyspark.orbn.oura.OuraRepository
 import com.earlyspark.orbn.playback.AudioCapabilities
 import com.earlyspark.orbn.playback.PlaybackService
+import com.earlyspark.orbn.visualizer.VisualizerActivity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -157,6 +161,7 @@ class MainActivity : ComponentActivity() {
                     onTap = ::onOrbTap,
                     onOuraTap = ::onOuraTap,
                     onReMatch = ::reMatch,
+                    onOrbLongPress = { startActivity(Intent(this, VisualizerActivity::class.java)) },
                 )
             }
         }
@@ -395,7 +400,7 @@ class MainActivity : ComponentActivity() {
 /**
  * Home screen: the breathing orb plus a status line. Tapping the orb plays/pauses the library.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun OrbnHome(
     totalCount: Flow<Int>,
@@ -407,6 +412,7 @@ fun OrbnHome(
     onTap: () -> Unit,
     onOuraTap: () -> Unit,
     onReMatch: () -> Unit,
+    onOrbLongPress: () -> Unit,
 ) {
     val total by totalCount.collectAsState(initial = 0)
     val analyzed by analyzedCount.collectAsState(initial = 0)
@@ -452,7 +458,7 @@ fun OrbnHome(
             Box(
                 modifier = Modifier
                     .size((180 * pulse).dp)
-                    .clickable { onTap() }
+                    .combinedClickable(onClick = onTap, onLongClick = onOrbLongPress)
                     .drawBehind {
                         val r = size.minDimension / 2f
                         drawCircle(

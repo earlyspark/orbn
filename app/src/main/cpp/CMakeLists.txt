@@ -47,3 +47,20 @@ target_link_libraries(orbn_analysis
     ${mediandk}
     ${android-lib}
 )
+
+# ── projectM v4: pre-built .so via jniLibs (M6 visualizer spike, P2) ───────────
+set(PROJECTM "${LIBS_DIR}/projectm")
+add_library(projectM-4 SHARED IMPORTED)
+set_target_properties(projectM-4 PROPERTIES
+    IMPORTED_LOCATION
+        "${CMAKE_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libprojectM-4.so")
+
+# orbn_visualizer JNI bridge to projectM. projectM resolves GL itself from the current context,
+# so we only link projectM + log/android (no GLES lib needed here).
+add_library(orbn_visualizer SHARED orbn_visualizer.cpp)
+target_include_directories(orbn_visualizer PRIVATE "${PROJECTM}/include")
+target_link_libraries(orbn_visualizer
+    projectM-4
+    ${log-lib}
+    ${android-lib}
+)
