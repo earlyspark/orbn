@@ -135,7 +135,12 @@ Built by RayAna ([@earlyspark](https://github.com/earlyspark)).
 
 ## License
 
-[MIT](LICENSE).
+orbn is licensed under the **[GNU Affero General Public License v3.0](LICENSE)** (AGPLv3).
+You're free to use, study, modify, and share it — but any distributed or network-deployed
+derivative must also be open-sourced under AGPLv3. As the sole copyright holder, the author
+can grant separate commercial licenses on request.
+
+Copyright © 2026 RayAna ([@earlyspark](https://github.com/earlyspark)).
 
 ## Acknowledgements
 

@@ -7,7 +7,8 @@ orbn is free, open-source software provided for personal use, **as is.**
 ## Use
 
 orbn is offered for personal, non-commercial use. Its source code is licensed under the
-[MIT License](LICENSE); these terms cover use of the application itself.
+[GNU Affero General Public License v3.0](LICENSE) (AGPLv3); these terms cover use of the
+application itself.
 
 ## Not a medical device
 
