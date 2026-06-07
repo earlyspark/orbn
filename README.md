@@ -126,6 +126,32 @@ only see data from the last time you manually opened Oura.
 
 > More detailed setup will be documented as the remaining parts of the app come together.
 
+## Visualizer presets
+
+The bundled visualizer presets (a curated subset of projectM's Cream of the Crop) vary in how hard
+they push the GPU. Measured on the MindOne (Dimensity 7050, ~90 Hz display):
+
+| fps (best) | Preset | |
+|---|---|---|
+| 22 | `royal-mashup-244` | 🔴 heavy |
+| 28 | `evet-flexi-x32-astroluxn777` | 🔴 heavy |
+| 30 | `royal-mashup-257` | 🔴 heavy |
+| 45 | `tripgnosis-goldenglowstick` | 🔴 heavy |
+| 49 | `royal-mashup-276-isosceles-edit` | 🔴 heavy |
+| 51 | `royal-mashup-287` | 🟡 borderline |
+| 53 | `martin-n-adamfx-hardcore-mix-collision-in-myself` | 🟡 borderline |
+| 60–72 | `suksma-kaeuldrone-disphignunt-sheviski`, `syst3mfailur-satanic-ring-v2-nz-isosceles-edit2`, `306-nz-ain-no-hoehoe`, `martin-underwater-cathedral-1`, `tonymilkdrop-nuclear-flexi-help-out-alien-comple`, `flexi-adamfx-geiss-and-rovastar-tokamak-tng-syne`, `suksma-mtn-flx-flacc-choilan-roam` | 🟢 fine\* |
+| 75–92 | `flexi-rovastar-fractopia-blame-hexcollie`, `martin-lightning`, `271-nz`, `211-wave` | 🟢 smooth |
+
+\* The 60–72 group is likely smoother in practice — each preset got only ~4 s in the sweep, so the
+one-time shader-compile hitch on switching dragged its average; with a longer dwell several of these
+sit near 80 fps.
+
+**Keeping a heavy preset is low-risk** — it won't crash, freeze, harm the device, or stall audio; the
+cost is just choppier visuals plus more battery and heat, and on a small fanless phone a heavy preset
+over a long session can warm the device and thermal-throttle (it self-protects — no damage). To drop
+one, delete its `.milk` file from `app/src/main/assets/presets/` and rebuild.
+
 ## Roadmap
 
 On-device music analysis → background tagging of your library → playback → Oura integration →
