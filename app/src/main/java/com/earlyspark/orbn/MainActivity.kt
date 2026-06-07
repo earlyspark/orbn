@@ -18,8 +18,13 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -103,6 +108,9 @@ class MainActivity : ComponentActivity() {
     // "why this track") is M7 — this is just enough to drive and verify the Oura flow.
     private val ouraLine = MutableStateFlow("")
 
+    // Pull-to-refresh state: true while a re-match (Oura sync + queue rebuild) is in flight.
+    private val isRefreshing = MutableStateFlow(false)
+
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(playing: Boolean) {
             isPlaying.value = playing
@@ -145,8 +153,10 @@ class MainActivity : ComponentActivity() {
                     nowPlaying = nowPlaying,
                     isPlaying = isPlaying,
                     ouraLine = ouraLine,
+                    isRefreshing = isRefreshing,
                     onTap = ::onOrbTap,
                     onOuraTap = ::onOuraTap,
+                    onReMatch = ::reMatch,
                 )
             }
         }
@@ -159,12 +169,19 @@ class MainActivity : ComponentActivity() {
         val future = MediaController.Builder(this, token).buildAsync()
         controllerFuture = future
         future.addListener({
-            val c = future.get()
+            // If onStop released this future before it connected (quick start→stop, e.g. unplug →
+            // screen sleep), the listener still fires on a cancelled future and get() throws.
+            if (future.isCancelled) return@addListener
+            val c = try {
+                future.get()
+            } catch (e: Exception) {
+                return@addListener
+            }
             controller = c
             c.addListener(playerListener)
             isPlaying.value = c.isPlaying
             nowPlaying.value = c.currentMediaItem?.mediaMetadata?.title?.toString()
-            if (c.mediaItemCount == 0) buildMatchedQueueInto(c, autoPlay = false)
+            if (c.mediaItemCount == 0) lifecycleScope.launch { buildMatchedQueueInto(c, autoPlay = false) }
         }, ContextCompat.getMainExecutor(this))
     }
 
@@ -192,7 +209,7 @@ class MainActivity : ComponentActivity() {
     private fun onOrbTap() {
         val c = controller ?: return
         when {
-            c.mediaItemCount == 0 -> buildMatchedQueueInto(c, autoPlay = true)
+            c.mediaItemCount == 0 -> lifecycleScope.launch { buildMatchedQueueInto(c, autoPlay = true) }
             c.isPlaying -> c.pause()
             else -> c.play()
         }
@@ -203,60 +220,74 @@ class MainActivity : ComponentActivity() {
      * sample it against the current target (Oura → [MatchTarget], else neutral), and set it on the
      * player. Falls back to a plain folder listing if nothing is analyzed yet (e.g. mid-tagging).
      */
-    private fun buildMatchedQueueInto(c: MediaController, autoPlay: Boolean) {
-        lifecycleScope.launch {
-            val db = OrbnDatabase.get(applicationContext)
-            val tracks = db.trackDao().analyzed()
-            val byPath = tracks.associateBy { it.path }
-            val candidates = tracks.mapNotNull { t ->
-                val f = t.toFeaturesOrNull() ?: return@mapNotNull null
-                // Prefer the embedded artist tag; fall back to the filename guess.
-                Matcher.Candidate(t.path, AffectFold.fold(f), f.instrumental, artist = t.artist ?: artistOf(t.path))
-            }
-            if (candidates.isEmpty()) {
-                // Nothing analyzed yet — keep playback working with the raw folder.
-                loadLibraryInto(c)
-                if (autoPlay) c.play()
-                return@launch
-            }
-            val target = Oura.repository(applicationContext).currentState()?.toTarget()
-                ?: MatchTarget.neutral()
-
-            // Recency penalty (D16): down-weight recently played tracks, from the D12 play-history log.
-            val now = System.currentTimeMillis()
-            val lastPlayed = db.playEventDao().lastPlayedSince(now - RECENCY_WINDOW_MS)
-                .associate { it.trackPath to it.lastPlayed }
-            val recency = RecencyPenalty.multipliers(lastPlayed, now, RECENCY_WINDOW_MS, RECENCY_FLOOR)
-
-            val queue = Matcher.buildQueue(candidates, target, count = QUEUE_SIZE, recency = recency)
-            // Reorder for a smooth energy contour + artist spread (selection unchanged).
-            val sequenced = QueueSequencer.sequence(queue)
-            android.util.Log.i(
-                "OrbnMatch",
-                "target e=%.2f±%.2f val=%s → %d/%d queued (%d recent); seq energies=%s".format(
-                    target.energyCenter, target.energyBand,
-                    target.valenceCenter?.let { "%.2f".format(it) } ?: "free",
-                    sequenced.size, candidates.size, lastPlayed.size,
-                    sequenced.take(10).joinToString(",") { "%.2f".format(it.point.energy) },
-                ),
-            )
-            val items = sequenced.map { cand ->
-                val f = java.io.File(cand.id)
-                val entity = byPath[cand.id]
-                MediaItem.Builder()
-                    .setUri(android.net.Uri.fromFile(f))
-                    .setMediaId(cand.id)
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle(entity?.title ?: f.nameWithoutExtension)
-                            .setArtist(entity?.artist)
-                            .build()
-                    )
-                    .build()
-            }
-            c.setMediaItems(items)
-            c.prepare()
+    private suspend fun buildMatchedQueueInto(c: MediaController, autoPlay: Boolean) {
+        val db = OrbnDatabase.get(applicationContext)
+        val tracks = db.trackDao().analyzed()
+        val byPath = tracks.associateBy { it.path }
+        val candidates = tracks.mapNotNull { t ->
+            val f = t.toFeaturesOrNull() ?: return@mapNotNull null
+            // Prefer the embedded artist tag; fall back to the filename guess.
+            Matcher.Candidate(t.path, AffectFold.fold(f), f.instrumental, artist = t.artist ?: artistOf(t.path))
+        }
+        if (candidates.isEmpty()) {
+            // Nothing analyzed yet — keep playback working with the raw folder.
+            loadLibraryInto(c)
             if (autoPlay) c.play()
+            return
+        }
+        val target = Oura.repository(applicationContext).currentState()?.toTarget()
+            ?: MatchTarget.neutral()
+
+        // Recency penalty (D16): down-weight recently played tracks, from the D12 play-history log.
+        val now = System.currentTimeMillis()
+        val lastPlayed = db.playEventDao().lastPlayedSince(now - RECENCY_WINDOW_MS)
+            .associate { it.trackPath to it.lastPlayed }
+        val recency = RecencyPenalty.multipliers(lastPlayed, now, RECENCY_WINDOW_MS, RECENCY_FLOOR)
+
+        val queue = Matcher.buildQueue(candidates, target, count = QUEUE_SIZE, recency = recency)
+        // Reorder for a smooth energy contour + artist spread (selection unchanged).
+        val sequenced = QueueSequencer.sequence(queue)
+        android.util.Log.i(
+            "OrbnMatch",
+            "target e=%.2f±%.2f val=%s → %d/%d queued (%d recent); seq energies=%s".format(
+                target.energyCenter, target.energyBand,
+                target.valenceCenter?.let { "%.2f".format(it) } ?: "free",
+                sequenced.size, candidates.size, lastPlayed.size,
+                sequenced.take(10).joinToString(",") { "%.2f".format(it.point.energy) },
+            ),
+        )
+        val items = sequenced.map { cand ->
+            val f = java.io.File(cand.id)
+            val entity = byPath[cand.id]
+            MediaItem.Builder()
+                .setUri(android.net.Uri.fromFile(f))
+                .setMediaId(cand.id)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(entity?.title ?: f.nameWithoutExtension)
+                        .setArtist(entity?.artist)
+                        .build()
+                )
+                .build()
+        }
+        c.setMediaItems(items)
+        c.prepare()
+        if (autoPlay) c.play()
+    }
+
+    /**
+     * Pull-to-refresh: pull the latest Oura data, rebuild the matched queue from it, and play —
+     * the deliberate "tune to how I am right now" action. Unlike resume/next, this re-reads Oura.
+     */
+    private fun reMatch() {
+        val c = controller ?: run { isRefreshing.value = false; return }
+        lifecycleScope.launch {
+            isRefreshing.value = true
+            runCatching { Oura.repository(applicationContext).refresh() } // pull latest; no-op if not connected
+            buildMatchedQueueInto(c, autoPlay = true)
+            refreshOuraStatus(forceNetwork = false) // refresh the readout line from the new cache
+            isRefreshing.value = false
+            Toast.makeText(this@MainActivity, "Re-matched to how you are now", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -364,6 +395,7 @@ class MainActivity : ComponentActivity() {
 /**
  * Home screen: the breathing orb plus a status line. Tapping the orb plays/pauses the library.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OrbnHome(
     totalCount: Flow<Int>,
@@ -371,14 +403,17 @@ fun OrbnHome(
     nowPlaying: Flow<String?>,
     isPlaying: Flow<Boolean>,
     ouraLine: Flow<String>,
+    isRefreshing: Flow<Boolean>,
     onTap: () -> Unit,
     onOuraTap: () -> Unit,
+    onReMatch: () -> Unit,
 ) {
     val total by totalCount.collectAsState(initial = 0)
     val analyzed by analyzedCount.collectAsState(initial = 0)
     val playing by isPlaying.collectAsState(initial = false)
     val track by nowPlaying.collectAsState(initial = null)
     val oura by ouraLine.collectAsState(initial = "")
+    val refreshing by isRefreshing.collectAsState(initial = false)
 
     val transition = rememberInfiniteTransition(label = "breathing")
     val pulse by transition.animateFloat(
@@ -399,13 +434,18 @@ fun OrbnHome(
         else -> "drop music in the orbn folder"
     }
 
-    Box(
+    PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = onReMatch,
         modifier = Modifier
             .fillMaxSize()
             .background(OrbnBg),
-        contentAlignment = Alignment.Center
     ) {
+        // Scrollable so the pull-to-refresh gesture engages even though the content fits on screen.
         Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
