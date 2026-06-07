@@ -18,14 +18,16 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OuraHeartRateEntity::class,
         OuraSessionEntity::class,
         PlayEventEntity::class,
+        FeedbackEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = false,
 )
 abstract class OrbnDatabase : RoomDatabase() {
     abstract fun trackDao(): TrackDao
     abstract fun ouraDao(): OuraDao
     abstract fun playEventDao(): PlayEventDao
+    abstract fun feedbackDao(): FeedbackDao
 
     companion object {
         @Volatile private var INSTANCE: OrbnDatabase? = null
@@ -162,6 +164,27 @@ abstract class OrbnDatabase : RoomDatabase() {
             }
         }
 
+        /** v9 → v10 adds the thumbs up/down feedback log (D12). Additive; existing data untouched. */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `feedback` (
+                        `id` INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        `trackPath` TEXT NOT NULL,
+                        `ratedAt` INTEGER NOT NULL,
+                        `rating` INTEGER NOT NULL,
+                        `targetEnergy` REAL NOT NULL,
+                        `targetValence` REAL,
+                        `source` TEXT NOT NULL,
+                        `trackEnergy` REAL NOT NULL,
+                        `trackValence` REAL NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun get(context: Context): OrbnDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -171,6 +194,7 @@ abstract class OrbnDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+                        MIGRATION_9_10,
                     )
                     // Backstop only: analysis data is reproducible from the audio files, so an
                     // unforeseen schema gap can safely rebuild + re-tag rather than crash.

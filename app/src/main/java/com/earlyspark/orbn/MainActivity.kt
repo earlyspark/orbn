@@ -6,30 +6,38 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Bundle
-import android.os.Environment
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -38,44 +46,42 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import com.earlyspark.orbn.data.OrbnDatabase
 import com.earlyspark.orbn.library.LibraryRepository
 import com.earlyspark.orbn.library.TaggingWorker
-import com.earlyspark.orbn.match.AffectFold
-import com.earlyspark.orbn.match.MatchTarget
+import com.earlyspark.orbn.match.FeedbackBias
 import com.earlyspark.orbn.match.Matcher
 import com.earlyspark.orbn.match.Mood
-import com.earlyspark.orbn.match.QueueSequencer
-import com.earlyspark.orbn.match.RecencyPenalty
-import com.earlyspark.orbn.match.toFeaturesOrNull
-import com.earlyspark.orbn.match.toTarget
+import com.earlyspark.orbn.match.QueueBuilder
 import com.earlyspark.orbn.model.BiometricState
-import com.earlyspark.orbn.model.TrackFeatures
 import com.earlyspark.orbn.model.biometricReadout
 import com.earlyspark.orbn.model.energyWord
-import com.earlyspark.orbn.model.valenceWord
 import com.earlyspark.orbn.oura.Oura
 import com.earlyspark.orbn.oura.OuraAuthManager
 import com.earlyspark.orbn.oura.OuraRepository
 import com.earlyspark.orbn.playback.AudioCapabilities
 import com.earlyspark.orbn.playback.PlaybackService
+import com.earlyspark.orbn.model.WhyThisTrack
 import com.earlyspark.orbn.ui.MoodSheet
 import com.earlyspark.orbn.ui.RefreshBanner
-import com.earlyspark.orbn.ui.WhyThisTrack
 import com.earlyspark.orbn.ui.WhyThisTrackSheet
 import com.earlyspark.orbn.visualizer.VisualizerActivity
 import kotlinx.coroutines.Job
@@ -87,21 +93,10 @@ import kotlin.math.abs
 
 private val OrbnBg = Color(0xFF0A0A0F)
 
-/** How many tracks the matcher samples into a queue per build. */
-private const val QUEUE_SIZE = 30
-
-/** Recently-played tracks are down-weighted, recovering over this window (≈ a full small-library cycle). */
-private const val RECENCY_WINDOW_MS = 2 * 60 * 60 * 1000L
-private const val RECENCY_FLOOR = 0.1f
-
-/** Best-effort artist from an "Artist - Title.ext" filename; null if the pattern doesn't match. */
-private fun artistOf(path: String): String? =
-    path.substringAfterLast('/').substringBeforeLast('.')
-        .substringBefore(" - ", missingDelimiterValue = "").trim().ifBlank { null }
-
 class MainActivity : ComponentActivity() {
 
     private lateinit var repository: LibraryRepository
+    private val queueBuilder by lazy { QueueBuilder(applicationContext) }
     private lateinit var audioManager: AudioManager
     private var audioCallback: AudioDeviceCallback? = null
 
@@ -110,7 +105,12 @@ class MainActivity : ComponentActivity() {
 
     // UI state driven by the player.
     private val nowPlaying = MutableStateFlow<String?>(null)
+    private val nowPlayingArtist = MutableStateFlow<String?>(null)
     private val isPlaying = MutableStateFlow(false)
+    // Whether the current track has actually started (vs. queued at 0:00) — "paused" vs "tap to play".
+    private val startedCurrent = MutableStateFlow(false)
+    // One-shot orb "burst" trigger: a counter bumped on deliberate re-picks (rematch / mood / 👎-skip).
+    private val orbBurst = MutableStateFlow(0)
 
     // Biometric readout (plain language) + the numeric Oura energy that drives the reactive orb.
     private val ouraLine = MutableStateFlow("")
@@ -125,14 +125,16 @@ class MainActivity : ComponentActivity() {
     private val whyThisTrack = MutableStateFlow<WhyThisTrack?>(null)
 
     private var bannerJob: Job? = null
-    private val uiPrefs by lazy { getSharedPreferences("orbn_ui", MODE_PRIVATE) }
 
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(playing: Boolean) {
             isPlaying.value = playing
+            if (playing) startedCurrent.value = true // playback began → a later pause is a real "paused"
         }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             nowPlaying.value = mediaItem?.mediaMetadata?.title?.toString()
+            nowPlayingArtist.value = mediaItem?.mediaMetadata?.artist?.toString()
+            startedCurrent.value = false // a fresh track at 0:00 is "tap to play", not "paused"
             // Keep the biometric target warm around track boundaries (gated — usually a no-op).
             refreshOuraStatus(forceNetwork = false)
         }
@@ -142,7 +144,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         repository = LibraryRepository(applicationContext)
-        manualMood.value = loadManualMood()
+        manualMood.value = queueBuilder.manualMood()
 
         // M3 spike: log output-device capabilities now, and again whenever a device is
         // plugged/unplugged — so attaching the CS43198 dock prints the bit-perfect verdict live.
@@ -173,10 +175,13 @@ class MainActivity : ComponentActivity() {
                         totalCount = repository.totalCount,
                         analyzedCount = repository.analyzedCount,
                         nowPlaying = nowPlaying,
+                        nowPlayingArtist = nowPlayingArtist,
                         isPlaying = isPlaying,
+                        startedCurrent = startedCurrent,
                         ouraLine = ouraLine,
                         manualMood = manualMood,
                         ouraEnergy = ouraEnergy,
+                        orbBurst = orbBurst,
                         onTap = ::onOrbTap,
                         onLongPress = { startActivity(Intent(this@MainActivity, VisualizerActivity::class.java)) },
                         onSwipeUp = ::openWhyThisTrack,
@@ -188,10 +193,15 @@ class MainActivity : ComponentActivity() {
                     MoodSheet(
                         visible = overrideVisible,
                         current = mood,
-                        onPick = ::pickMood,
+                        onApply = ::pickMood,
                         onDismiss = { showOverride.value = false },
                     )
-                    WhyThisTrackSheet(info = why, onDismiss = { whyThisTrack.value = null })
+                    WhyThisTrackSheet(
+                        info = why,
+                        onThumbsUp = ::thumbsUp,
+                        onThumbsDown = ::thumbsDown,
+                        onDismiss = { whyThisTrack.value = null },
+                    )
                 }
             }
         }
@@ -216,6 +226,8 @@ class MainActivity : ComponentActivity() {
             c.addListener(playerListener)
             isPlaying.value = c.isPlaying
             nowPlaying.value = c.currentMediaItem?.mediaMetadata?.title?.toString()
+            nowPlayingArtist.value = c.currentMediaItem?.mediaMetadata?.artist?.toString()
+            startedCurrent.value = c.isPlaying || c.currentPosition > 0 // reconnect: paused-mid-song vs fresh
             // Build a ready queue but DO NOT play — playback is always tap-to-play (D23).
             if (c.mediaItemCount == 0) lifecycleScope.launch { buildMatchedQueueInto(c, autoPlay = false) }
         }, ContextCompat.getMainExecutor(this))
@@ -251,74 +263,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Resolve the active matching target: a manual override (D17) wins; else the cached Oura state;
-     * else a neutral fallback (D17). Reads only cached state (no network).
-     */
-    private suspend fun currentTarget(): MatchTarget {
-        val mood = manualMood.value
-        return mood?.toTarget()
-            ?: Oura.repository(applicationContext).currentState()?.toTarget()
-            ?: MatchTarget.neutral()
-    }
-
-    /**
-     * Build a biometric-matched play queue (M5.2): score the analyzed library through [AffectFold],
-     * sample it against the current target (manual override → Oura → neutral) and set it on the
-     * player. Falls back to a plain folder listing if nothing is analyzed yet (e.g. mid-tagging).
-     */
+    /** Build the matched queue via the shared [QueueBuilder] and set it on the player. */
     private suspend fun buildMatchedQueueInto(c: MediaController, autoPlay: Boolean) {
-        val db = OrbnDatabase.get(applicationContext)
-        val tracks = db.trackDao().analyzed()
-        val byPath = tracks.associateBy { it.path }
-        val candidates = tracks.mapNotNull { t ->
-            val f = t.toFeaturesOrNull() ?: return@mapNotNull null
-            // Prefer the embedded artist tag; fall back to the filename guess.
-            Matcher.Candidate(t.path, AffectFold.fold(f), f.instrumental, artist = t.artist ?: artistOf(t.path))
-        }
-        if (candidates.isEmpty()) {
-            // Nothing analyzed yet — keep playback working with the raw folder.
-            loadLibraryInto(c)
-            if (autoPlay) c.play()
-            return
-        }
-        val target = currentTarget()
-
-        // Recency penalty (D16): down-weight recently played tracks, from the D12 play-history log.
-        val now = System.currentTimeMillis()
-        val lastPlayed = db.playEventDao().lastPlayedSince(now - RECENCY_WINDOW_MS)
-            .associate { it.trackPath to it.lastPlayed }
-        val recency = RecencyPenalty.multipliers(lastPlayed, now, RECENCY_WINDOW_MS, RECENCY_FLOOR)
-
-        val queue = Matcher.buildQueue(candidates, target, count = QUEUE_SIZE, recency = recency)
-        // Reorder for a smooth energy contour + artist spread (selection unchanged).
-        val sequenced = QueueSequencer.sequence(queue)
-        android.util.Log.i(
-            "OrbnMatch",
-            "target e=%.2f±%.2f val=%s → %d/%d queued (%d recent); seq energies=%s".format(
-                target.energyCenter, target.energyBand,
-                target.valenceCenter?.let { "%.2f".format(it) } ?: "free",
-                sequenced.size, candidates.size, lastPlayed.size,
-                sequenced.take(10).joinToString(",") { "%.2f".format(it.point.energy) },
-            ),
-        )
-        val items = sequenced.map { cand ->
-            val f = java.io.File(cand.id)
-            val entity = byPath[cand.id]
-            MediaItem.Builder()
-                .setUri(android.net.Uri.fromFile(f))
-                .setMediaId(cand.id)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(entity?.title ?: f.nameWithoutExtension)
-                        .setArtist(entity?.artist)
-                        .build()
-                )
-                .build()
-        }
-        c.setMediaItems(items)
-        c.prepare()
-        if (autoPlay) c.play()
+        queueBuilder.applyTo(c, autoPlay)
     }
 
     /**
@@ -333,9 +280,15 @@ class MainActivity : ComponentActivity() {
             runCatching { Oura.repository(applicationContext).refresh() } // pull latest; no-op if not connected
             val wasPlaying = c.isPlaying
             buildMatchedQueueInto(c, autoPlay = wasPlaying)
+            triggerBurst() // deliberate re-pick → orb flourish
             refreshOuraStatus(forceNetwork = false) // refresh the readout line from the new cache
-            showBanner("Re-matched · feeling ${energyWord(currentTarget().energyCenter)}")
+            showBanner("Re-matched · feeling ${energyWord(queueBuilder.currentTarget().energyCenter)}")
         }
+    }
+
+    /** Bump the one-shot orb-burst trigger (a deliberate re-pick swapped the song in). */
+    private fun triggerBurst() {
+        orbBurst.value = orbBurst.value + 1
     }
 
     /**
@@ -344,7 +297,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun pickMood(mood: Mood?) {
         manualMood.value = mood
-        saveManualMood(mood)
+        queueBuilder.setManualMood(mood)
         showOverride.value = false
         if (mood == null) refreshOuraStatus(forceNetwork = false)
         rebuildQueuePreserving(if (mood != null) "Mood · ${mood.label}" else "Following Oura")
@@ -356,6 +309,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             val wasPlaying = c.isPlaying
             buildMatchedQueueInto(c, autoPlay = wasPlaying)
+            triggerBurst() // deliberate re-pick → orb flourish
             showBanner(message)
         }
     }
@@ -370,47 +324,27 @@ class MainActivity : ComponentActivity() {
             showBanner("Nothing playing yet")
             return
         }
-        lifecycleScope.launch {
-            val entity = OrbnDatabase.get(applicationContext).trackDao().byPath(path)
-            val features = entity?.toFeaturesOrNull()
-            if (features == null) {
-                whyThisTrack.value = WhyThisTrack(
-                    title = title, artist = artist, energyLabel = "—", energyValue = 0f,
-                    valenceLabel = "—", topMood = null,
-                    reason = "Still analyzing this track — check back once tagging finishes.",
-                )
-                return@launch
-            }
-            val point = AffectFold.fold(features)
-            val target = currentTarget()
-            whyThisTrack.value = WhyThisTrack(
-                title = title,
-                artist = artist,
-                energyLabel = energyWord(point.energy),
-                energyValue = point.energy,
-                valenceLabel = valenceWord(point.valence),
-                topMood = features.topMoodOrNull(),
-                reason = reasonFor(point.energy, target.energyCenter, manualMood.value),
-            )
-        }
+        lifecycleScope.launch { whyThisTrack.value = queueBuilder.whyThisTrack(path, title, artist) }
     }
 
-    /** Build the play queue from the app-owned Music folder (audio files only). */
-    private fun loadLibraryInto(c: MediaController) {
-        val dir = getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: return
-        val files = dir.listFiles { f ->
-            f.isFile && f.extension.lowercase() in setOf("mp3", "flac", "m4a", "ogg", "wav", "aac")
-        }?.sortedBy { it.name } ?: return
-        if (files.isEmpty()) return
-        val items = files.map { f ->
-            MediaItem.Builder()
-                .setUri(android.net.Uri.fromFile(f))
-                .setMediaId(f.absolutePath)
-                .setMediaMetadata(MediaMetadata.Builder().setTitle(f.nameWithoutExtension).build())
-                .build()
+    /** 👍 (D12 feedback): reinforce this pick, keep playing, close the sheet. */
+    private fun thumbsUp() {
+        val path = whyThisTrack.value?.trackPath ?: return
+        lifecycleScope.launch { queueBuilder.recordFeedback(path, rating = +1) }
+        whyThisTrack.value = null
+        showBanner("Noted — more like this")
+    }
+
+    /** 👎 (D12 feedback): record it was wrong for this state, skip to the next track (orb burst). */
+    private fun thumbsDown() {
+        val path = whyThisTrack.value?.trackPath ?: return
+        lifecycleScope.launch { queueBuilder.recordFeedback(path, rating = -1) }
+        whyThisTrack.value = null
+        controller?.let { c ->
+            if (c.hasNextMediaItem()) c.seekToNextMediaItem()
+            triggerBurst() // a new song was picked → orb flourish
         }
-        c.setMediaItems(items)
-        c.prepare()
+        showBanner("Skipped — noted for next time")
     }
 
     /** Reconcile the folder with the DB, then enqueue the (resumable) tagging job. */
@@ -477,15 +411,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // --- Manual-override persistence (SharedPreferences "orbn_ui") --------------------------------
-
-    /** Load the saved manual mood by name, or null (= Default / follow Oura). */
-    private fun loadManualMood(): Mood? = Mood.byName(uiPrefs.getString("manual_mood", null))
-
-    private fun saveManualMood(mood: Mood?) {
-        uiPrefs.edit().putString("manual_mood", mood?.name).apply()
-    }
-
     /** Show a top banner message, auto-clearing after a beat. */
     private fun showBanner(message: String) {
         banner.value = message
@@ -496,24 +421,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Dominant mood head over a confidence floor, or null. */
-    private fun TrackFeatures.topMoodOrNull(): String? {
-        val top = listOf(
-            "happy" to happy, "sad" to sad, "aggressive" to aggressive, "relaxed" to relaxed,
-        ).maxByOrNull { it.second } ?: return null
-        return if (top.second >= 0.4f) top.first else null
-    }
-
-    /** One plain-language reason a track fits (or pleasantly deviates from) the target. */
-    private fun reasonFor(trackEnergy: Float, targetEnergy: Float, mood: Mood?): String {
-        val src = if (mood != null) "your ${mood.label} mood" else "your current state"
-        val d = trackEnergy - targetEnergy
-        return when {
-            abs(d) < 0.12f -> "A close match for $src (${energyWord(targetEnergy)})."
-            d > 0f -> "A little livelier than $src, mixed in for variety."
-            else -> "A little calmer than $src, mixed in for variety."
-        }
-    }
 }
 
 /**
@@ -522,15 +429,19 @@ class MainActivity : ComponentActivity() {
  * swipe-left = energy override. The orb's palette + pulse rate follow the effective energy (manual
  * override if set, else Oura).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun OrbnHome(
     totalCount: Flow<Int>,
     analyzedCount: Flow<Int>,
     nowPlaying: Flow<String?>,
+    nowPlayingArtist: Flow<String?>,
     isPlaying: Flow<Boolean>,
+    startedCurrent: Flow<Boolean>,
     ouraLine: Flow<String>,
     manualMood: Flow<Mood?>,
     ouraEnergy: Flow<Float?>,
+    orbBurst: Flow<Int>,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     onSwipeUp: () -> Unit,
@@ -541,10 +452,13 @@ fun OrbnHome(
     val total by totalCount.collectAsState(initial = 0)
     val analyzed by analyzedCount.collectAsState(initial = 0)
     val playing by isPlaying.collectAsState(initial = false)
+    val started by startedCurrent.collectAsState(initial = false)
     val track by nowPlaying.collectAsState(initial = null)
+    val artist by nowPlayingArtist.collectAsState(initial = null)
     val oura by ouraLine.collectAsState(initial = "")
     val mood by manualMood.collectAsState(initial = null)
     val ouraE by ouraEnergy.collectAsState(initial = null)
+    val burstTick by orbBurst.collectAsState(initial = 0)
 
     // Effective energy drives the orb: a chosen mood's energy wins, else Oura, else a neutral middle.
     val energy = (mood?.energyCenter ?: ouraE ?: 0.5f).coerceIn(0f, 1f)
@@ -567,15 +481,27 @@ fun OrbnHome(
         label = "pulse"
     )
 
+    // One-shot orb "transition" on a deliberate re-pick: a gentle swell + slow color *shift* (not a
+    // bright flash — flashing risks photosensitivity). Ramps up, then eases back over ~1.8s.
+    val burst = remember { Animatable(0f) }
+    LaunchedEffect(burstTick) {
+        if (burstTick > 0) {
+            burst.animateTo(1f, tween(durationMillis = 500, easing = LinearOutSlowInEasing))
+            burst.animateTo(0f, tween(durationMillis = 1300, easing = FastOutSlowInEasing))
+        }
+    }
+    val bv = burst.value
+
+    // The now-playing line (♪ + artist – title) is built in the Text below when a track is loaded;
+    // these are the no-track-loaded states.
     val status = when {
-        playing && track != null -> "♪  $track"
-        track != null -> "paused · $track"
         analyzed < total -> "tagging your library…  $analyzed / $total"
         total > 0 -> "tap to play · $total tracks"
         else -> "drop music in the orbn folder"
     }
-    // When a mood is chosen it replaces the body readout (so orb + line agree); else show Oura.
-    val bioLine = mood?.let { "mood · ${it.label}" } ?: oura
+    // The readout always shows your body state (feeling / readiness / synced), even when a manual
+    // mood is set — the mood drives the orb + queue, but never rewrites this line.
+    val bioLine = oura
     // Only the connect prompt is tappable; the readout is informational so tap-anywhere = play/pause.
     val ouraTappable = bioLine.startsWith("tap to connect")
 
@@ -606,17 +532,28 @@ fun OrbnHome(
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // Play-state cue, floated over the orb (out of the text flow → no layout jump). Hidden
+            // while actually playing.
+            val stateWord = when {
+                track == null -> null
+                playing -> null
+                started -> "paused"
+                else -> "tap to play"
+            }
             Box(
                 modifier = Modifier
-                    .size((180 * pulse).dp)
+                    .size((180 * pulse * (1f + 0.15f * bv)).dp)
                     .drawBehind {
                         val r = size.minDimension / 2f
+                        // Burst eases the orb toward a violet, then back — a color shift, not a flash.
+                        val burstCore = lerp(core, Color(0xFFC9A9FF), 0.7f * bv)
+                        val burstMid = lerp(mid, Color(0xFF7A52E0), 0.7f * bv)
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    core,
-                                    mid,
-                                    mid.copy(alpha = 0.2f),
+                                    burstCore,
+                                    burstMid,
+                                    burstMid.copy(alpha = 0.2f),
                                     Color(0x00000000)
                                 ),
                                 center = Offset(size.width / 2f, size.height / 2f),
@@ -627,19 +564,42 @@ fun OrbnHome(
                         )
                     }
             )
+            // CTA where the "orbn" title used to be — tucked close under the orb. Height is reserved
+            // so the lines below don't jump when it shows (paused / tap to play) or hides (playing).
+            Box(
+                modifier = Modifier.padding(top = 18.dp).height(24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                stateWord?.let {
+                    Text(
+                        text = it,
+                        color = Color(0xFFAEB6C7),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+            val t = track
+            val a = artist
+            // Now-playing line: a persistent ♪ (brighter while actually playing) + "artist – title".
+            // Capped at 90% screen width; marquees if it overflows.
             Text(
-                text = "orbn",
-                color = Color(0xFFE8ECF5),
-                fontSize = 34.sp,
-                fontWeight = FontWeight.Light,
-                modifier = Modifier.padding(top = 48.dp)
-            )
-            Text(
-                text = status,
+                text = if (t != null) buildAnnotatedString {
+                    val noteColor = if (playing) Color(0xFFB4C4E8) else Color(0xFF8A93A6)
+                    withStyle(SpanStyle(fontSize = 18.sp, color = noteColor)) { append("♪") }
+                    append("  ")
+                    append(if (!a.isNullOrBlank()) "$a – $t" else t)
+                } else AnnotatedString(status),
                 color = Color(0xFF7C8499),
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 16.dp, start = 32.dp, end = 32.dp)
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip,
+                modifier = Modifier
+                    .padding(top = 6.dp)
+                    .widthIn(max = (LocalConfiguration.current.screenWidthDp * 0.9f).dp)
+                    .basicMarquee(),
             )
             if (bioLine.isNotBlank()) {
                 val ouraModifier = Modifier

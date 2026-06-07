@@ -13,6 +13,7 @@ package com.earlyspark.orbn.match
  *    tense/stressed, while **Angry** holds the high-energy dark extreme.
  *
  * @property label            Chip label shown to the user.
+ * @property description       One-line preview of what the mood does (shown before applying).
  * @property valenceCenter    Target valence 0..1, or null = free (don't constrain mood).
  * @property energyCenter     Target energy 0..1 (arousal).
  * @property energyBand       Half-width (Gaussian σ) of the energy zone — wider roams more.
@@ -21,16 +22,17 @@ package com.earlyspark.orbn.match
  */
 enum class Mood(
     val label: String,
+    val description: String,
     val valenceCenter: Float?,
     val energyCenter: Float,
     val energyBand: Float,
     val instrumentalBias: Float,
 ) {
-    HAPPY("Happy", valenceCenter = 0.85f, energyCenter = 0.60f, energyBand = 0.18f, instrumentalBias = 0f),
-    EXCITED("Excited", valenceCenter = null, energyCenter = 0.88f, energyBand = 0.18f, instrumentalBias = 0f),
-    CHILL("Chill", valenceCenter = 0.72f, energyCenter = 0.25f, energyBand = 0.18f, instrumentalBias = 0.7f),
-    SAD("Sad", valenceCenter = 0.20f, energyCenter = 0.45f, energyBand = 0.30f, instrumentalBias = 0f),
-    ANGRY("Angry", valenceCenter = 0.20f, energyCenter = 0.88f, energyBand = 0.18f, instrumentalBias = 0f);
+    HAPPY("Happy", "Bright, upbeat.", valenceCenter = 0.85f, energyCenter = 0.60f, energyBand = 0.18f, instrumentalBias = 0f),
+    EXCITED("Excited", "Fast, high-energy — any feeling.", valenceCenter = null, energyCenter = 0.88f, energyBand = 0.18f, instrumentalBias = 0f),
+    CHILL("Chill", "Mellow, mostly instrumental.", valenceCenter = 0.72f, energyCenter = 0.25f, energyBand = 0.18f, instrumentalBias = 0.7f),
+    SAD("Sad", "Slower, downbeat.", valenceCenter = 0.20f, energyCenter = 0.45f, energyBand = 0.30f, instrumentalBias = 0f),
+    ANGRY("Angry", "Dark, intense, high-energy.", valenceCenter = 0.20f, energyCenter = 0.88f, energyBand = 0.18f, instrumentalBias = 0f);
 
     fun toTarget(): MatchTarget = MatchTarget(
         energyCenter = energyCenter,

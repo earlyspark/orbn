@@ -42,6 +42,7 @@ object Matcher {
         count: Int,
         random: Random = Random.Default,
         recency: Map<String, Float> = emptyMap(),
+        feedback: Map<String, Float> = emptyMap(),
     ): List<Candidate> {
         // Functional-mood gate (no-op under Oura, where instrumentalMin is null).
         val pool = candidates.filter { c ->
@@ -50,8 +51,11 @@ object Matcher {
         }.toMutableList()
         if (pool.isEmpty() || count <= 0) return emptyList()
 
-        // Fit weight × recency multiplier (recently-played tracks down-weighted, never excluded).
-        val weights = pool.mapTo(ArrayList()) { weightFor(it, target) * (recency[it.id] ?: 1f) }
+        // Fit weight × recency multiplier × learned feedback bias (👍 boosts / 👎 down-weights in
+        // similar states). Both default to 1.0 when absent — never hard-exclude.
+        val weights = pool.mapTo(ArrayList()) {
+            weightFor(it, target) * (recency[it.id] ?: 1f) * (feedback[it.id] ?: 1f)
+        }
         val n = minOf(count, pool.size)
         val result = ArrayList<Candidate>(n)
 
