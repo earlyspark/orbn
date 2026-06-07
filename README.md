@@ -49,13 +49,15 @@ If the idea of a music player that actually knows how you're doing seems neat to
 
 ## Status
 
-🚧 **Early, but the core loop works: it reads your body and plays music to match.** On real
-hardware, orbn scans and analyzes your library entirely on-device (tempo, key, energy, mood, genre),
-connects to your Oura Ring to read your recovery, heart rate, and stress into a "how you are right
-now" signal, and **builds a play queue that fits that signal** — sampled for variety, ordered to
-flow, and mindful of what you've recently played so it doesn't repeat. Pull down to re-tune the
-queue to right now. Plays back hi-res to the iKKO's DAC when the case is attached. Still to come, in
-the open: the full-screen reactive visualizer, a manual mood picker, and a lot of polish.
+🚧 **Early, but the core loop works end to end: it reads your body, plays music to match, and
+visualizes it.** On real hardware, orbn scans and analyzes your library entirely on-device (tempo,
+key, energy, mood, genre), connects to your Oura Ring to read your recovery, heart rate, and stress
+into a "how you are right now" signal, and **builds a play queue that fits that signal** — sampled
+for variety, ordered to flow, and mindful of what you've recently played so it doesn't repeat. Pull
+down to re-tune the queue to right now. Now-playing is a **full-screen MilkDrop-style visualizer
+(projectM) that reacts to the live audio** — tap to play/pause, long-press to exit. Plays back
+hi-res to the iKKO's DAC when the case is attached. Still to come, in the open: theming the visuals
+to your biometric state, a manual mood picker, and a lot of polish.
 
 ## The device
 
@@ -93,7 +95,7 @@ Oura Ring ──► daily recovery + intra-day heart rate ──► "how you are
 orbn is an Android app. You'll need Android Studio (or the Android SDK + NDK) and JDK 21.
 
 ```bash
-./scripts/fetch-native-deps.sh   # one-time: download prebuilt native deps (Essentia, ONNX Runtime, Eigen, models)
+./scripts/fetch-native-deps.sh   # one-time: download prebuilt native deps (Essentia, ONNX Runtime, Eigen, projectM, models)
 ./gradlew :app:installDebug      # build and install on a connected device
 ```
 
@@ -127,7 +129,8 @@ only see data from the last time you manually opened Oura.
 ## Roadmap
 
 On-device music analysis → background tagging of your library → playback → Oura integration →
-biometric matching ✅ **— done so far** — → **the reactive visualizer (next)** → polish.
+biometric matching → the full-screen reactive visualizer ✅ **— done so far** — →
+**biometric-themed visuals + a manual mood picker (next)** → polish.
 
 ## Author
 
