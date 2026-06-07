@@ -176,9 +176,13 @@ class OuraRepository(
             center = (baseCenter + frac * AROUSAL_WEIGHT).coerceIn(0f, 1f)
         }
 
-        // High stress caps energy — don't push a stressed body up (mirror).
-        if (daily.stressSummary.equals("stressful", ignoreCase = true)) {
-            center = minOf(center, STRESS_ENERGY_CAP)
+        // Stress is a HIGH-energy state (tense/keyed-up), NOT a calm one — so mirroring it pushes
+        // energy UP, not down (corrects the earlier mislabel; see F-finding / D14 stress handling).
+        // Floored so a stressful day lands energetic even when the resting HR is low. Valence stays
+        // free (D15) — sad music is low-energy, so a high target naturally squeezes it out.
+        val stressful = daily.stressSummary.equals("stressful", ignoreCase = true)
+        if (stressful) {
+            center = maxOf(center, STRESS_ENERGY_FLOOR)
         }
 
         val syncedAt = source?.atMillis ?: daily.fetchedAt
@@ -198,7 +202,10 @@ class OuraRepository(
                 hrvMs = hrv,
                 stressSummary = daily.stressSummary,
                 arousal = arousal,
-                note = if (source?.viaSession == true) "via session (${latestSession?.type ?: "?"})" else null,
+                note = listOfNotNull(
+                    if (source?.viaSession == true) "via session (${latestSession?.type ?: "?"})" else null,
+                    if (stressful) "stress → energy boosted" else null,
+                ).joinToString("; ").ifBlank { null },
             ),
         )
     }
@@ -250,8 +257,8 @@ class OuraRepository(
         const val DEFAULT_MAX_HR = 190
         /** Max upward energy shift from a fully elevated heart rate. */
         const val AROUSAL_WEIGHT = 0.25f
-        /** Energy ceiling applied on high-stress days. */
-        const val STRESS_ENERGY_CAP = 0.6f
+        /** Energy floor on high-stress days — stress is a keyed-up state, so mirror it energetic. */
+        const val STRESS_ENERGY_FLOOR = 0.75f
         val ISO: DateTimeFormatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME
     }
 }
