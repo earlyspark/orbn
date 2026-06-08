@@ -151,14 +151,30 @@ fun WhyThisTrackSheet(
                     HorizontalDivider(color = DividerColor, thickness = 1.dp, modifier = Modifier.padding(end = 8.dp))
                     Spacer(Modifier.height(14.dp))
 
-                    // Energy is the matched axis — show YOUR word (same as the home readout); the song's
-                    // own energy + the "for variety" nuance live in the tooltip.
+                    // Energy is the matched axis. With no mood, the target IS your body read, so the
+                    // tooltip speaks of your heart rate/movement. With a mood set, the target is the
+                    // mood — so the row flags "Mood: X" and the tooltip shows your body read separately,
+                    // never passing the mood off as a biometric reading.
                     StatRow(
                         icon = Icons.Filled.MonitorHeart,
                         label = "Energy",
                         value = w.targetEnergyLabel,
-                        explanation = "Your energy right now, read from your heart rate and movement — on a " +
-                            "0 to 1 scale (1 = most energetic), you're at ${"%.2f".format(w.targetEnergyValue)}.",
+                        trailingChip = w.activeMoodLabel?.let { "Mood: $it" },
+                        explanation = if (w.activeMoodLabel != null) {
+                            buildString {
+                                append("You've set Mood to ${w.activeMoodLabel}, so orbn matches songs ")
+                                if (w.bodyEnergyLabel != null && w.bodyEnergyValue != null) {
+                                    append("regardless of your body. Your body's reading is now ")
+                                    append("${w.bodyEnergyLabel} (${"%.2f".format(w.bodyEnergyValue)}), ")
+                                    append("from your heart rate and movement.")
+                                } else {
+                                    append("to that instead of your body.")
+                                }
+                            }
+                        } else {
+                            "Your energy right now, read from your heart rate and movement — on a " +
+                                "0 to 1 scale (1 = most energetic), you're at ${"%.2f".format(w.targetEnergyValue)}."
+                        },
                     )
                     StatRow(
                         icon = Icons.Filled.Favorite,
@@ -188,9 +204,15 @@ fun WhyThisTrackSheet(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StatRow(icon: ImageVector, label: String, value: String, explanation: String?) {
+private fun StatRow(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    explanation: String?,
+    trailingChip: String? = null,
+) {
     if (explanation == null) {
-        StatRowContent(icon, label, value, modifier = Modifier)
+        StatRowContent(icon, label, value, trailingChip, modifier = Modifier)
         return
     }
     val tooltipState = rememberTooltipState(isPersistent = true) // stays until an outside tap
@@ -210,14 +232,20 @@ private fun StatRow(icon: ImageVector, label: String, value: String, explanation
         state = tooltipState,
     ) {
         StatRowContent(
-            icon, label, value,
+            icon, label, value, trailingChip,
             modifier = Modifier.clickable { scope.launch { tooltipState.show() } },
         )
     }
 }
 
 @Composable
-private fun StatRowContent(icon: ImageVector, label: String, value: String, modifier: Modifier) {
+private fun StatRowContent(
+    icon: ImageVector,
+    label: String,
+    value: String,
+    trailingChip: String?,
+    modifier: Modifier,
+) {
     Row(
         modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -225,6 +253,10 @@ private fun StatRowContent(icon: ImageVector, label: String, value: String, modi
         Icon(icon, contentDescription = null, tint = TextDim, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(10.dp))
         Text(label, color = TextDim, fontSize = 13.sp, modifier = Modifier.width(54.dp))
-        Text(value, color = TextValue, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Text(value, color = TextValue, fontSize = 14.sp)
+        if (trailingChip != null) {
+            Spacer(Modifier.width(8.dp))
+            MoodChip(trailingChip)
+        }
     }
 }

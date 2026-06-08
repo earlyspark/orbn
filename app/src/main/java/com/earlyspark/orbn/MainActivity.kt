@@ -80,6 +80,7 @@ import com.earlyspark.orbn.playback.AudioCapabilities
 import com.earlyspark.orbn.playback.PlaybackService
 import com.earlyspark.orbn.model.WhyThisTrack
 import com.earlyspark.orbn.ui.HistorySheet
+import com.earlyspark.orbn.ui.MoodChip
 import com.earlyspark.orbn.ui.MoodSheet
 import com.earlyspark.orbn.ui.Orbn
 import com.earlyspark.orbn.ui.RefreshBanner
@@ -319,7 +320,9 @@ class MainActivity : ComponentActivity() {
                     refreshOuraStatus(forceNetwork = false) // refresh the readout from the new cache
                     showBanner("Re-matched · feeling ${energyWord(queueBuilder.currentTarget().energyCenter)}")
                 }
-                QueueBuilder.ReMatch.MOOD -> showBanner("Finding a different song based on Mood")
+                QueueBuilder.ReMatch.MOOD -> queueBuilder.manualMood()?.let { m ->
+                    showBanner("Mood: ${m.label} · ${energyWord(m.energyCenter)} picks")
+                }
                 QueueBuilder.ReMatch.RANDOM -> showBanner("Finding a random song")
             }
             triggerBurst() // deliberate re-pick → orb flourish
@@ -737,6 +740,12 @@ fun OrbnHome(
                     textAlign = TextAlign.Center,
                     modifier = ouraModifier
                 )
+            }
+            // A manual mood overrides the queue's energy while it's set, so the body line above can read
+            // "mellow" while picks are "charged". This chip names the override so the two never look
+            // contradictory; the body readout itself is never rewritten.
+            mood?.let { m ->
+                MoodChip(text = "Mood: ${m.label}", modifier = Modifier.padding(top = 8.dp))
             }
             // Library analysis progress — pinned at the bottom, below the readout, while tagging runs
             // (home only; the viz never shows it). Hidden once everything's analyzed.

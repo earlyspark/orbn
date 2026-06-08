@@ -156,8 +156,11 @@ class QueueBuilder(private val context: Context) {
         val applied = if (random) applyRandom(player, autoPlay) else applyTo(player, autoPlay)
         return when {
             !applied -> ReMatch.NONE
-            connected -> ReMatch.BIOMETRIC
+            // A manual mood overrides the target (see currentTarget), so it wins over Oura here too —
+            // otherwise a mood-driven rematch is mislabelled BIOMETRIC and the banner reads as a body
+            // reading ("feeling charged") when it's really the chosen mood.
             manualMood() != null -> ReMatch.MOOD
+            connected -> ReMatch.BIOMETRIC
             else -> ReMatch.RANDOM
         }
     }
@@ -244,11 +247,19 @@ class QueueBuilder(private val context: Context) {
     /** Assemble the "why this track" detail for [path], or a placeholder while it's still analyzing. */
     suspend fun whyThisTrack(path: String, title: String, artist: String?): WhyThisTrack {
         val target = currentTarget()
-        val targetLabel = energyWord(target.energyCenter) // YOUR matched energy word (= home readout)
+        val targetLabel = energyWord(target.energyCenter) // the matched energy word (a mood's, if set)
+        // When a mood overrides the target, expose your *body's* own read too, so the sheet can show
+        // both and never claim a mood value was "read from your heart rate" (it wasn't).
+        val mood = manualMood()
+        val body = if (mood != null) Oura.repository(context).currentState() else null
         val features = db.trackDao().byPath(path)?.toFeaturesOrNull()
             ?: return WhyThisTrack(
                 trackPath = path, title = title, artist = artist, targetEnergyLabel = targetLabel,
-                targetEnergyValue = target.energyCenter, energyLabel = "—", energyValue = 0f,
+                targetEnergyValue = target.energyCenter,
+                activeMoodLabel = mood?.label,
+                bodyEnergyLabel = body?.let { energyWord(it.energyCenter) },
+                bodyEnergyValue = body?.energyCenter,
+                energyLabel = "—", energyValue = 0f,
                 valenceLabel = "—", topMood = null,
                 reason = "Still analyzing this track — check back once tagging finishes.",
             )
@@ -259,6 +270,9 @@ class QueueBuilder(private val context: Context) {
             artist = artist,
             targetEnergyLabel = targetLabel,
             targetEnergyValue = target.energyCenter,
+            activeMoodLabel = mood?.label,
+            bodyEnergyLabel = body?.let { energyWord(it.energyCenter) },
+            bodyEnergyValue = body?.energyCenter,
             energyLabel = energyWord(point.energy),
             energyValue = point.energy,
             valenceLabel = valenceWord(point.valence),

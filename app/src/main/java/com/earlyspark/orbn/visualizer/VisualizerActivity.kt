@@ -86,6 +86,7 @@ class VisualizerActivity : ComponentActivity() {
     private lateinit var stateLine: TextView
     private lateinit var trackLine: TextView
     private lateinit var bioLine: TextView
+    private lateinit var moodLine: TextView // chip mirroring the home "Mood: X" override pill
 
     private val queueBuilder by lazy { QueueBuilder(applicationContext) }
 
@@ -304,6 +305,22 @@ class VisualizerActivity : ComponentActivity() {
             setShadowLayer(8f, 0f, 0f, Color.BLACK)
             setPadding(0, 14, 0, 0)
         }
+        // Mirrors the home/why-this MoodChip (ui/MoodChip.kt): same slate pill + soft-blue text, drawn
+        // as a TextView since the viz readout is a classic View, not Compose. WRAP_CONTENT so the pill
+        // hugs the text and stays centered rather than stretching the column.
+        moodLine = TextView(this).apply {
+            setTextColor(0xFF7FB0FF.toInt())
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setPadding(28, 8, 28, 8)
+            background = GradientDrawable().apply {
+                cornerRadius = 100f
+                setColor(0xFF1B2233.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = 16; gravity = Gravity.CENTER_HORIZONTAL }
+        }
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -311,6 +328,7 @@ class VisualizerActivity : ComponentActivity() {
             addView(stateLine)
             addView(trackLine)
             addView(bioLine)
+            addView(moodLine)
             alpha = 0f
         }
     }
@@ -328,6 +346,7 @@ class VisualizerActivity : ComponentActivity() {
                 stateLine.text = ""
                 trackLine.text = "long-press to go back"
                 bioLine.text = ""
+                moodLine.text = ""
             } else {
                 val c = controller
                 val md = c?.currentMediaItem?.mediaMetadata
@@ -342,9 +361,12 @@ class VisualizerActivity : ComponentActivity() {
                 val repo = Oura.repository(this@VisualizerActivity)
                 val state = if (repo.isConnected) runCatching { repo.currentState() }.getOrNull() else null
                 bioLine.text = state?.let { biometricReadout(it) } ?: ""
+                // Mood override pill (parity with home) — present only while a manual mood is set.
+                val mood = queueBuilder.manualMood()
+                moodLine.text = mood?.let { "Mood: ${it.label}" } ?: ""
             }
-            // Collapse empty lines so there are no phantom gaps between the three.
-            listOf(stateLine, trackLine, bioLine).forEach {
+            // Collapse empty lines so there are no phantom gaps between them.
+            listOf(stateLine, trackLine, bioLine, moodLine).forEach {
                 it.visibility = if (it.text.isNullOrEmpty()) View.GONE else View.VISIBLE
             }
         }
@@ -448,7 +470,9 @@ class VisualizerActivity : ComponentActivity() {
                 QueueBuilder.ReMatch.NONE -> {} // no music → do nothing
                 QueueBuilder.ReMatch.BIOMETRIC ->
                     showBanner("Re-matched · feeling ${energyWord(queueBuilder.currentTarget().energyCenter)}")
-                QueueBuilder.ReMatch.MOOD -> showBanner("Finding a different song based on Mood")
+                QueueBuilder.ReMatch.MOOD -> queueBuilder.manualMood()?.let { m ->
+                    showBanner("Mood: ${m.label} · ${energyWord(m.energyCenter)} picks")
+                }
                 QueueBuilder.ReMatch.RANDOM -> showBanner("Finding a random song")
             }
         }
