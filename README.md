@@ -24,7 +24,8 @@ orbn is different on three counts:
 - **It understands how you are** — using your Oura Ring's overnight recovery/HRV as a daily
   baseline, nudged by your heart rate and movement through the day.
 - **It runs entirely on the device** — analysis, matching, and visuals all happen locally on your
-  phone. No cloud, no account, no data leaving the device.
+  phone. orbn has no backend and no account of its own; the only thing it ever fetches is your own
+  readings from Oura's API, and nothing about your music or listening leaves the device.
 
 Under the hood, orbn analyzes each song once (tempo, key, energy, mood, genre) and places it in a
 simple *valence–energy* space. Your biometric state becomes a target point in that same space, and
@@ -87,7 +88,7 @@ Oura Ring ──► daily recovery + intra-day heart rate & movement ──► "
 
 ## Building
 
-orbn is an Android app. You'll need Android Studio (or the Android SDK + NDK) and JDK 21.
+orbn is an Android app. You'll need Android Studio (or the Android SDK + NDK) and JDK 17 or newer.
 
 ```bash
 ./scripts/fetch-native-deps.sh   # one-time: download prebuilt native deps (Essentia, ONNX Runtime, Eigen, projectM, models)
@@ -130,7 +131,7 @@ modified. Because they live inside the app, **uninstalling orbn deletes its copi
 quick). Supported: `mp3`, `flac`, `m4a`, `aac`, `ogg`, `wav`.
 
 **How analysis works:** when you add music, orbn analyzes each track in the background — tempo, key,
-energy, and mood — entirely on-device (nothing is uploaded). The home screen shows the progress
+energy, mood, and genre — entirely on-device (nothing is uploaded). The home screen shows the progress
 (`tagging your library… 3 / 12`), and a track becomes available to play once it's been analyzed. It's
 roughly a few seconds per track and resumes automatically if interrupted.
 
