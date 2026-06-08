@@ -10,7 +10,7 @@ data class HistoryEntry(
     val trackPath: String,
     val title: String,
     val artist: String?,
-    val energyLabel: String,   // the energy word you were in at play time
-    val energyValue: Float,    // 0..1 raw
+    val energyLabel: String?,  // the energy word you were in at play time; null if no Oura data then
+    val energyValue: Float?,   // 0..1 raw; null when there was no biometric reading at play time
     val rating: Int,           // +1 / −1 / 0 (none) — the track's current rating
 )

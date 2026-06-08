@@ -127,24 +127,28 @@ private fun HistoryRow(e: HistoryEntry, onRate: (HistoryEntry, Int) -> Unit) {
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
             Text(
                 e.title, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium,
-                maxLines = 1, softWrap = false, modifier = Modifier.basicMarquee(),
+                maxLines = 1, softWrap = false,
+                modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE), // loop, don't freeze clipped
             )
             e.artist?.let {
                 Text(it, color = TextDim, fontSize = 12.sp, maxLines = 1, softWrap = false)
             }
-            Row(
-                modifier = Modifier.padding(top = 3.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Filled.MonitorHeart, contentDescription = "energy",
-                    tint = TextDim, modifier = Modifier.size(13.dp),
-                )
-                Spacer(Modifier.width(5.dp))
-                Text(
-                    "${e.energyLabel} · ${"%.2f".format(e.energyValue)}",
-                    color = TextValue, fontSize = 11.sp,
-                )
+            // Energy line only when there was a biometric reading at play time (no Oura → hidden).
+            if (e.energyValue != null) {
+                Row(
+                    modifier = Modifier.padding(top = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Filled.MonitorHeart, contentDescription = "energy",
+                        tint = TextDim, modifier = Modifier.size(13.dp),
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        "${e.energyLabel} · ${"%.2f".format(e.energyValue)}",
+                        color = TextValue, fontSize = 11.sp,
+                    )
+                }
             }
         }
         // Tap to set; tap the active one again to clear (rating 0).

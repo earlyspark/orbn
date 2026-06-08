@@ -227,13 +227,14 @@ class QueueBuilder(private val context: Context) {
         val ratings = db.feedbackDao().all().associate { it.trackPath to it.rating }
         return plays.map { p ->
             val entity = byPath[p.trackPath]
-            val energy = p.energyTarget ?: 0.5f
+            // No biometric reading at play time (no Oura) → leave energy null so the row hides it.
+            val energy = p.energyTarget
             HistoryEntry(
                 id = p.id,
                 trackPath = p.trackPath,
                 title = entity?.title ?: titleOf(p.trackPath),
                 artist = entity?.artist ?: artistOf(p.trackPath),
-                energyLabel = energyWord(energy),
+                energyLabel = energy?.let { energyWord(it) },
                 energyValue = energy,
                 rating = ratings[p.trackPath] ?: 0,
             )

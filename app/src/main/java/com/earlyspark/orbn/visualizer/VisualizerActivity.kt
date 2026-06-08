@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.graphics.Color
 import android.graphics.Typeface
+import android.text.TextUtils
 import android.graphics.drawable.GradientDrawable
 import android.util.Log
 import android.view.Gravity
@@ -200,7 +201,10 @@ class VisualizerActivity : ComponentActivity() {
             addView(
                 statusBox,
                 FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                    // Bounded to 90% of the screen so a long song line overflows (→ marquees) instead
+                    // of the box just growing to fit the text.
+                    (resources.displayMetrics.widthPixels * 0.9f).toInt(),
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
                 ).apply { gravity = Gravity.CENTER },
             )
             addView(
@@ -280,7 +284,18 @@ class VisualizerActivity : ComponentActivity() {
             textSize = 15f
             gravity = Gravity.CENTER
             setShadowLayer(8f, 0f, 0f, Color.BLACK)
-            setPadding(0, 4, 0, 0)
+            setPadding(0, 20, 0, 0) // breathing room below the "paused"/"tap to play" cue above
+            // Marquee a too-long song line instead of wrapping/clipping. Needs single-line, horizontal
+            // scrolling, a repeat limit, and isSelected=true; the bounded box width (set below) makes it
+            // actually overflow rather than just sizing to the text.
+            isSingleLine = true
+            ellipsize = TextUtils.TruncateAt.MARQUEE
+            marqueeRepeatLimit = -1
+            setHorizontallyScrolling(true)
+            isSelected = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
         }
         bioLine = TextView(this).apply {
             setTextColor(0xFF7FB0FF.toInt()) // soft blue, matching the home readout accent
@@ -409,7 +424,7 @@ class VisualizerActivity : ComponentActivity() {
     }
 
     private fun onRateHistory(entry: HistoryEntry, rating: Int) {
-        lifecycleScope.launch { queueBuilder.setHistoryRating(entry.trackPath, rating, entry.energyValue) }
+        lifecycleScope.launch { queueBuilder.setHistoryRating(entry.trackPath, rating, entry.energyValue ?: 0.5f) }
         historyEntries.value = historyEntries.value.map {
             if (it.trackPath == entry.trackPath) it.copy(rating = rating) else it
         }

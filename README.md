@@ -2,6 +2,8 @@
 
 # orbn
 
+<img src="assets/orbn-character.png" width="80" alt="Orbn — the app's headphone-wearing pixel mascot" />
+
 **music that matches how your body feels**
 
 A biometric-aware, fully on-device music player. Built for the [iKKO MindOne](https://ikko.com/), it
@@ -109,6 +111,23 @@ orbn is an Android app. You'll need Android Studio (or the Android SDK + NDK) an
 
 The native dependencies are large prebuilt binaries kept out of git; the script fetches them
 from a GitHub Release and unpacks them where the build expects.
+
+### Installing it on your phone
+
+There's **no prebuilt APK to download** — orbn is distributed as source, so you build your own from
+this repo. (That's partly by design: the app uses *your own* Oura credentials — see
+[Connecting Oura](#connecting-oura) — and building it yourself is what keeps those yours.) Once you've
+done the one-time setup above, there are two ways to get your build onto the phone:
+
+- **Straight from your computer (simplest):** turn on **Developer options** (Settings → About → tap
+  *Build number* seven times) and enable **USB** (or **Wireless**) **debugging**, connect the phone,
+  and run `./gradlew :app:installDebug` — it compiles and installs in one step.
+- **As a standalone file:** run `./gradlew :app:assembleDebug` to produce an APK at
+  `app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`, copy it to the phone, and tap it to install.
+  The first time, Android asks you to allow **"install unknown apps"** for whatever opened the file
+  (your files app or browser) — that's the sideload prompt.
+
+This is a debug build, which is fine for personal use.
 
 ### Adding your music
 

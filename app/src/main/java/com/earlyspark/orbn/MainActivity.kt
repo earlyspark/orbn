@@ -16,10 +16,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -44,10 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
@@ -88,6 +81,7 @@ import com.earlyspark.orbn.playback.PlaybackService
 import com.earlyspark.orbn.model.WhyThisTrack
 import com.earlyspark.orbn.ui.HistorySheet
 import com.earlyspark.orbn.ui.MoodSheet
+import com.earlyspark.orbn.ui.Orbn
 import com.earlyspark.orbn.ui.RefreshBanner
 import com.earlyspark.orbn.ui.WhyThisTrackSheet
 import com.earlyspark.orbn.visualizer.VisualizerActivity
@@ -346,7 +340,7 @@ class MainActivity : ComponentActivity() {
         queueBuilder.setManualMood(mood)
         showOverride.value = false
         if (mood == null) refreshOuraStatus(forceNetwork = false)
-        rebuildQueuePreserving(if (mood != null) "Mood · ${mood.label}" else "Following Oura")
+        rebuildQueuePreserving(if (mood != null) "Mood · ${mood.label}" else "Updating mood")
     }
 
     /** Rebuild the queue from the current target without changing whether audio is playing. */
@@ -383,7 +377,7 @@ class MainActivity : ComponentActivity() {
 
     /** Set/clear a track's rating from History (persists; reflects on all of that track's rows). */
     private fun onRateHistory(entry: HistoryEntry, rating: Int) {
-        lifecycleScope.launch { queueBuilder.setHistoryRating(entry.trackPath, rating, entry.energyValue) }
+        lifecycleScope.launch { queueBuilder.setHistoryRating(entry.trackPath, rating, entry.energyValue ?: 0.5f) }
         historyEntries.value = historyEntries.value.map {
             if (it.trackPath == entry.trackPath) it.copy(rating = rating) else it
         }
@@ -557,10 +551,10 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * Home screen: a biometric-reactive breathing orb plus a status line. Gestures (D24): tap anywhere =
- * play/pause, long-press anywhere = visualizer, swipe-up = why-this-track, swipe-down = rematch,
- * swipe-left = energy override. The orb's palette + pulse rate follow the effective energy (manual
- * override if set, else Oura).
+ * Home screen: the biometric-reactive mascot ([Orbn]) plus a status line. Gestures (D24): tap
+ * anywhere = play/pause, long-press anywhere = visualizer, swipe-up = why-this-track, swipe-down =
+ * rematch, swipe-left = energy override. The mascot's head hue follows the effective energy (manual
+ * override if set, else Oura); it wakes/dozes with playback.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -596,37 +590,11 @@ fun OrbnHome(
     val ouraE by ouraEnergy.collectAsState(initial = null)
     val burstTick by orbBurst.collectAsState(initial = 0)
 
-    // Effective energy drives the orb: a chosen mood's energy wins, else Oura, else a neutral middle.
+    // Effective energy drives the mascot's head hue: a chosen mood's energy wins, else Oura, else a
+    // neutral middle.
     val energy = (mood?.energyCenter ?: ouraE ?: 0.5f).coerceIn(0f, 1f)
-
-    // Stay cool/blue through calm & moderate energy; only warm at genuinely high arousal (≥0.6,
-    // full warm by ~0.9) so a relaxed state never reads "red". Pulse still speeds up with energy.
-    val warm = ((energy - 0.6f) / 0.3f).coerceIn(0f, 1f)
-    val core = lerp(Color(0xFFBFD4FF), Color(0xFFFFC9A8), warm)
-    val mid = lerp(Color(0xFF4F86E8), Color(0xFFE8624F), warm)
-    val pulseDuration = (3200 - 1600 * energy).toInt()
-
-    val transition = rememberInfiniteTransition(label = "breathing")
-    val pulse by transition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = pulseDuration),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulse"
-    )
-
-    // One-shot orb "transition" on a deliberate re-pick: a gentle swell + slow color *shift* (not a
-    // bright flash — flashing risks photosensitivity). Ramps up, then eases back over ~1.8s.
-    val burst = remember { Animatable(0f) }
-    LaunchedEffect(burstTick) {
-        if (burstTick > 0) {
-            burst.animateTo(1f, tween(durationMillis = 500, easing = LinearOutSlowInEasing))
-            burst.animateTo(0f, tween(durationMillis = 1300, easing = FastOutSlowInEasing))
-        }
-    }
-    val bv = burst.value
+    // Valence only comes from an emotional mood; Oura leaves it free (D15), so default to neutral 0.5.
+    val valence = (mood?.valenceCenter ?: 0.5f).coerceIn(0f, 1f)
 
     // One-shot "nudge" on the add-music CTA: a gentle scale + brighten when the orb is tapped with no
     // library yet. Single soft pulse (no strobe — photosensitivity).
@@ -685,29 +653,13 @@ fun OrbnHome(
                 started -> "paused"
                 else -> "tap to play"
             }
-            Box(
-                modifier = Modifier
-                    .size((180 * pulse * (1f + 0.15f * bv)).dp)
-                    .drawBehind {
-                        val r = size.minDimension / 2f
-                        // Burst eases the orb toward a violet, then back — a color shift, not a flash.
-                        val burstCore = lerp(core, Color(0xFFC9A9FF), 0.7f * bv)
-                        val burstMid = lerp(mid, Color(0xFF7A52E0), 0.7f * bv)
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    burstCore,
-                                    burstMid,
-                                    burstMid.copy(alpha = 0.2f),
-                                    Color(0x00000000)
-                                ),
-                                center = Offset(size.width / 2f, size.height / 2f),
-                                radius = r
-                            ),
-                            radius = r,
-                            center = Offset(size.width / 2f, size.height / 2f)
-                        )
-                    }
+            Orbn(
+                valence = valence,
+                energy = energy,
+                playing = playing,
+                burstTick = burstTick,
+                nudgeTick = nudgeTick,
+                modifier = Modifier.size(150.dp),
             )
             // CTA where the "orbn" title used to be — tucked close under the orb. Height is reserved
             // so the lines below don't jump when it shows (paused / tap to play) or hides (playing).
@@ -745,7 +697,7 @@ fun OrbnHome(
                     modifier = Modifier
                         .padding(top = 6.dp)
                         .widthIn(max = (LocalConfiguration.current.screenWidthDp * 0.9f).dp)
-                        .basicMarquee(),
+                        .basicMarquee(iterations = Int.MAX_VALUE), // loop forever, don't freeze clipped
                 )
                 // Empty library → tappable CTA that opens the SAF picker to import music. (A persistent
                 // "add more" entry point lives in M10 settings; this is the onboarding affordance.)
