@@ -2,15 +2,21 @@ package com.earlyspark.orbn.data
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 
 @Dao
 interface FeedbackDao {
 
-    @Insert
-    suspend fun insert(event: FeedbackEntity)
+    /** Upsert the track's rating — a new 👍/👎 replaces any prior one (one row per track). */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(event: FeedbackEntity)
 
-    /** Every feedback row — input to the feedback bias (the table stays small: one per 👍/👎). */
+    /** Null out a track's rating (History "clear"). */
+    @Query("DELETE FROM feedback WHERE trackPath = :path")
+    suspend fun clear(path: String)
+
+    /** Every feedback row (one per track) — input to the feedback bias and the History ratings. */
     @Query("SELECT * FROM feedback")
     suspend fun all(): List<FeedbackEntity>
 

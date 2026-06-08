@@ -8,6 +8,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import com.earlyspark.orbn.data.FeedbackEntity
 import com.earlyspark.orbn.data.OrbnDatabase
+import com.earlyspark.orbn.model.HistoryEntry
 import com.earlyspark.orbn.model.TrackFeatures
 import com.earlyspark.orbn.model.WhyThisTrack
 import com.earlyspark.orbn.model.energyWord
@@ -139,22 +140,55 @@ class QueueBuilder(private val context: Context) {
      * and the track's own affect — so [FeedbackBias] can later learn state-aware, not just "good/bad".
      */
     suspend fun recordFeedback(path: String, rating: Int) {
-        val features = db.trackDao().byPath(path)?.toFeaturesOrNull() ?: return
-        val point = AffectFold.fold(features)
         val target = currentTarget()
         val source = manualMood()?.let { "mood:${it.name}" } ?: "oura"
-        db.feedbackDao().insert(
+        upsertRating(path, rating, target.energyCenter, target.valenceCenter, source)
+    }
+
+    /** Set/clear a track's rating from the History drawer, stamped with the energy it played in. */
+    suspend fun setHistoryRating(path: String, rating: Int, contextEnergy: Float) {
+        upsertRating(path, rating, contextEnergy, targetValence = null, source = "history")
+    }
+
+    /** Upsert (or clear, when rating == 0) the track's single rating with the given context. */
+    private suspend fun upsertRating(path: String, rating: Int, targetEnergy: Float, targetValence: Float?, source: String) {
+        if (rating == 0) { db.feedbackDao().clear(path); return }
+        val point = db.trackDao().byPath(path)?.toFeaturesOrNull()?.let { AffectFold.fold(it) }
+        db.feedbackDao().upsert(
             FeedbackEntity(
                 trackPath = path,
                 ratedAt = System.currentTimeMillis(),
                 rating = rating,
-                targetEnergy = target.energyCenter,
-                targetValence = target.valenceCenter,
+                targetEnergy = targetEnergy,
+                targetValence = targetValence,
                 source = source,
-                trackEnergy = point.energy,
-                trackValence = point.valence,
+                trackEnergy = point?.energy ?: 0.5f,
+                trackValence = point?.valence ?: 0.5f,
             )
         )
+    }
+
+    /**
+     * The recent play history (D12 log) for the History drawer — every PLAYED event (with repeats),
+     * newest first, each tagged with the energy you were in then + your current rating for the track.
+     */
+    suspend fun recentHistory(limit: Int = 30): List<HistoryEntry> {
+        val plays = db.playEventDao().recentPlays(limit)
+        val byPath = db.trackDao().analyzed().associateBy { it.path }
+        val ratings = db.feedbackDao().all().associate { it.trackPath to it.rating }
+        return plays.map { p ->
+            val entity = byPath[p.trackPath]
+            val energy = p.energyTarget ?: 0.5f
+            HistoryEntry(
+                id = p.id,
+                trackPath = p.trackPath,
+                title = entity?.title ?: titleOf(p.trackPath),
+                artist = entity?.artist ?: artistOf(p.trackPath),
+                energyLabel = energyWord(energy),
+                energyValue = energy,
+                rating = ratings[p.trackPath] ?: 0,
+            )
+        }
     }
 
     /** Assemble the "why this track" detail for [path], or a placeholder while it's still analyzing. */

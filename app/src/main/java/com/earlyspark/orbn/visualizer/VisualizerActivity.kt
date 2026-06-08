@@ -33,11 +33,13 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.earlyspark.orbn.match.Mood
 import com.earlyspark.orbn.match.QueueBuilder
+import com.earlyspark.orbn.model.HistoryEntry
 import com.earlyspark.orbn.model.WhyThisTrack
 import com.earlyspark.orbn.model.biometricReadout
 import com.earlyspark.orbn.model.energyWord
 import com.earlyspark.orbn.oura.Oura
 import com.earlyspark.orbn.playback.PlaybackService
+import com.earlyspark.orbn.ui.HistorySheet
 import com.earlyspark.orbn.ui.MoodSheet
 import com.earlyspark.orbn.ui.RefreshBanner
 import com.earlyspark.orbn.ui.WhyThisTrackSheet
@@ -86,6 +88,8 @@ class VisualizerActivity : ComponentActivity() {
     // Compose overlay state (the home sheets reused over the GL surface).
     private val showOverride = MutableStateFlow(false)
     private val whyThisTrack = MutableStateFlow<WhyThisTrack?>(null)
+    private val showHistory = MutableStateFlow(false)
+    private val historyEntries = MutableStateFlow<List<HistoryEntry>>(emptyList())
     private val banner = MutableStateFlow<String?>(null)
     private val manualMood = MutableStateFlow<Mood?>(null)
     private var bannerJob: Job? = null
@@ -323,6 +327,7 @@ class VisualizerActivity : ComponentActivity() {
     private fun onSwipe(dx: Float, dy: Float) {
         if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
             if (dx < 0) showOverride.value = true // swipe left → mood picker
+            else openHistory()                    // swipe right → history
         } else {
             if (dy < 0) openWhyThisTrack()        // swipe up → why this track
             else reMatch()                        // swipe down → rematch
@@ -337,6 +342,8 @@ class VisualizerActivity : ComponentActivity() {
             val overrideVisible by showOverride.collectAsState()
             val why by whyThisTrack.collectAsState()
             val mood by manualMood.collectAsState()
+            val historyVisible by showHistory.collectAsState()
+            val history by historyEntries.collectAsState()
             RefreshBanner(message = bannerMsg)
             MoodSheet(
                 visible = overrideVisible,
@@ -350,6 +357,27 @@ class VisualizerActivity : ComponentActivity() {
                 onThumbsDown = ::thumbsDown,
                 onDismiss = { whyThisTrack.value = null },
             )
+            HistorySheet(
+                visible = historyVisible,
+                entries = history,
+                onRate = ::onRateHistory,
+                onDismiss = { showHistory.value = false },
+            )
+        }
+    }
+
+    /** Swipe-right: load + show recent-play history for retroactive feedback (shared engine). */
+    private fun openHistory() {
+        lifecycleScope.launch {
+            historyEntries.value = queueBuilder.recentHistory()
+            showHistory.value = true
+        }
+    }
+
+    private fun onRateHistory(entry: HistoryEntry, rating: Int) {
+        lifecycleScope.launch { queueBuilder.setHistoryRating(entry.trackPath, rating, entry.energyValue) }
+        historyEntries.value = historyEntries.value.map {
+            if (it.trackPath == entry.trackPath) it.copy(rating = rating) else it
         }
     }
 

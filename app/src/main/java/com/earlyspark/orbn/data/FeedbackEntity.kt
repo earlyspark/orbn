@@ -4,24 +4,23 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 /**
- * One thumbs-up / thumbs-down the user gave a track from the "why this track" sheet (D12 — feedback
- * is rich personalization data we can't backfill, so capture it from day one).
+ * The user's current 👍/👎 for a track (D12 — feedback is rich personalization data we can't backfill).
+ * **One row per track** (`trackPath` is the key): a new rating *replaces* the old, and the History
+ * drawer can clear it (delete the row) — so the user can change their mind or null a decision out.
  *
- * The **context** matters more than the rating alone: a thumbs-down means "wrong pick *for this
- * state*", not "bad song". So each row stores the active matching target (energy/valence/source) at
- * rating time plus the track's own affect — enough for [com.earlyspark.orbn.match.FeedbackBias] to
- * later down/up-weight the track only in *similar* states.
+ * The **context** still matters: a thumbs-down means "wrong pick *for this state*", not "bad song".
+ * The row stores the matching target (energy/valence/source) it was rated in + the track's own affect,
+ * so [com.earlyspark.orbn.match.FeedbackBias] down/up-weights the track only in *similar* states.
  *
- * @property rating        +1 (thumbs up) or −1 (thumbs down).
- * @property targetEnergy  Active target energy when rated.
+ * @property rating        +1 (thumbs up) or −1 (thumbs down). Clearing deletes the row entirely.
+ * @property targetEnergy  Active/at-play target energy when rated.
  * @property targetValence Active target valence, or null if it was free (Oura case).
- * @property source        "oura" or "mood:<NAME>" — where the target came from.
+ * @property source        "oura" / "mood:<NAME>" / "history" — where the rating's context came from.
  * @property trackEnergy/trackValence  The track's own computed affect point.
  */
 @Entity(tableName = "feedback")
 data class FeedbackEntity(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val trackPath: String,
+    @PrimaryKey val trackPath: String,
     val ratedAt: Long,
     val rating: Int,
     val targetEnergy: Float,

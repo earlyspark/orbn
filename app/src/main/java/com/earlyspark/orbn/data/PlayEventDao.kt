@@ -17,6 +17,10 @@ interface PlayEventDao {
     )
     suspend fun lastPlayedSince(since: Long): List<TrackLastPlayed>
 
+    /** Recent PLAYED events, newest first (with repeats) — input to the History drawer. */
+    @Query("SELECT * FROM play_events WHERE type = 'PLAYED' ORDER BY playedAt DESC LIMIT :limit")
+    suspend fun recentPlays(limit: Int): List<PlayEventEntity>
+
     /** Total events logged (debug / sanity). */
     @Query("SELECT COUNT(*) FROM play_events")
     suspend fun count(): Int

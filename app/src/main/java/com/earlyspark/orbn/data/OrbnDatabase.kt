@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PlayEventEntity::class,
         FeedbackEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class OrbnDatabase : RoomDatabase() {
@@ -185,6 +185,41 @@ abstract class OrbnDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v10 → v11 makes feedback **one row per track** (`trackPath` PK, was an autogen id), so a
+         * rating can be replaced/cleared. Recreate-table pattern; collapse any duplicates to the
+         * latest per track by inserting in ascending `ratedAt` order with REPLACE.
+         */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `feedback_new` (
+                        `trackPath` TEXT NOT NULL,
+                        `ratedAt` INTEGER NOT NULL,
+                        `rating` INTEGER NOT NULL,
+                        `targetEnergy` REAL NOT NULL,
+                        `targetValence` REAL,
+                        `source` TEXT NOT NULL,
+                        `trackEnergy` REAL NOT NULL,
+                        `trackValence` REAL NOT NULL,
+                        PRIMARY KEY(`trackPath`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT OR REPLACE INTO `feedback_new`
+                        (`trackPath`, `ratedAt`, `rating`, `targetEnergy`, `targetValence`, `source`, `trackEnergy`, `trackValence`)
+                    SELECT `trackPath`, `ratedAt`, `rating`, `targetEnergy`, `targetValence`, `source`, `trackEnergy`, `trackValence`
+                    FROM `feedback` ORDER BY `ratedAt` ASC
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE `feedback`")
+                db.execSQL("ALTER TABLE `feedback_new` RENAME TO `feedback`")
+            }
+        }
+
         fun get(context: Context): OrbnDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -194,7 +229,7 @@ abstract class OrbnDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10,
+                        MIGRATION_9_10, MIGRATION_10_11,
                     )
                     // Backstop only: analysis data is reproducible from the audio files, so an
                     // unforeseen schema gap can safely rebuild + re-tag rather than crash.

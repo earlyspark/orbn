@@ -72,6 +72,7 @@ import com.earlyspark.orbn.match.Matcher
 import com.earlyspark.orbn.match.Mood
 import com.earlyspark.orbn.match.QueueBuilder
 import com.earlyspark.orbn.model.BiometricState
+import com.earlyspark.orbn.model.HistoryEntry
 import com.earlyspark.orbn.model.biometricReadout
 import com.earlyspark.orbn.model.energyWord
 import com.earlyspark.orbn.oura.Oura
@@ -80,6 +81,7 @@ import com.earlyspark.orbn.oura.OuraRepository
 import com.earlyspark.orbn.playback.AudioCapabilities
 import com.earlyspark.orbn.playback.PlaybackService
 import com.earlyspark.orbn.model.WhyThisTrack
+import com.earlyspark.orbn.ui.HistorySheet
 import com.earlyspark.orbn.ui.MoodSheet
 import com.earlyspark.orbn.ui.RefreshBanner
 import com.earlyspark.orbn.ui.WhyThisTrackSheet
@@ -123,6 +125,8 @@ class MainActivity : ComponentActivity() {
     private val banner = MutableStateFlow<String?>(null)
     private val showOverride = MutableStateFlow(false)
     private val whyThisTrack = MutableStateFlow<WhyThisTrack?>(null)
+    private val showHistory = MutableStateFlow(false)
+    private val historyEntries = MutableStateFlow<List<HistoryEntry>>(emptyList())
 
     private var bannerJob: Job? = null
 
@@ -169,6 +173,8 @@ class MainActivity : ComponentActivity() {
                 val overrideVisible by showOverride.collectAsState(initial = false)
                 val why by whyThisTrack.collectAsState(initial = null)
                 val mood by manualMood.collectAsState(initial = null)
+                val historyVisible by showHistory.collectAsState(initial = false)
+                val history by historyEntries.collectAsState(initial = emptyList())
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     OrbnHome(
@@ -187,6 +193,7 @@ class MainActivity : ComponentActivity() {
                         onSwipeUp = ::openWhyThisTrack,
                         onSwipeDown = ::reMatch,
                         onSwipeLeft = { showOverride.value = true },
+                        onSwipeRight = ::openHistory,
                         onOuraTap = ::onOuraTap,
                     )
                     RefreshBanner(message = bannerMsg)
@@ -201,6 +208,12 @@ class MainActivity : ComponentActivity() {
                         onThumbsUp = ::thumbsUp,
                         onThumbsDown = ::thumbsDown,
                         onDismiss = { whyThisTrack.value = null },
+                    )
+                    HistorySheet(
+                        visible = historyVisible,
+                        entries = history,
+                        onRate = ::onRateHistory,
+                        onDismiss = { showHistory.value = false },
                     )
                 }
             }
@@ -327,6 +340,22 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch { whyThisTrack.value = queueBuilder.whyThisTrack(path, title, artist) }
     }
 
+    /** Swipe-right: load + show the recent-play history for retroactive feedback. */
+    private fun openHistory() {
+        lifecycleScope.launch {
+            historyEntries.value = queueBuilder.recentHistory()
+            showHistory.value = true
+        }
+    }
+
+    /** Set/clear a track's rating from History (persists; reflects on all of that track's rows). */
+    private fun onRateHistory(entry: HistoryEntry, rating: Int) {
+        lifecycleScope.launch { queueBuilder.setHistoryRating(entry.trackPath, rating, entry.energyValue) }
+        historyEntries.value = historyEntries.value.map {
+            if (it.trackPath == entry.trackPath) it.copy(rating = rating) else it
+        }
+    }
+
     /** 👍 (D12 feedback): reinforce this pick, keep playing, close the sheet. */
     private fun thumbsUp() {
         val path = whyThisTrack.value?.trackPath ?: return
@@ -447,6 +476,7 @@ fun OrbnHome(
     onSwipeUp: () -> Unit,
     onSwipeDown: () -> Unit,
     onSwipeLeft: () -> Unit,
+    onSwipeRight: () -> Unit,
     onOuraTap: () -> Unit,
 ) {
     val total by totalCount.collectAsState(initial = 0)
@@ -522,6 +552,7 @@ fun OrbnHome(
                     onDragEnd = {
                         if (abs(dx) > abs(dy)) {
                             if (dx <= -threshold) onSwipeLeft()
+                            else if (dx >= threshold) onSwipeRight()
                         } else {
                             if (dy <= -threshold) onSwipeUp()
                             else if (dy >= threshold) onSwipeDown()
