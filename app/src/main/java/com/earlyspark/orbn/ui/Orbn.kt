@@ -157,20 +157,35 @@ fun Orbn(
     }
 
     // Play/pause transition: starting playback perks it up (quick blink → gentle nod → brief smile).
+    // The try/finally guarantees the transient flags reset even if this coroutine is cancelled mid-perk
+    // (nod() animates the shared bobY Animatable — a competing nod from another effect cancels us, see
+    // the burst effect below). Without it a stuck `blink` would shut the eyes while actually playing.
     LaunchedEffect(playing) {
         if (playing) {
-            blink = true; delay(110); blink = false
-            nod()
-            smile = true; delay(1600); smile = false
+            try {
+                blink = true; delay(110); blink = false
+                nod()
+                smile = true; delay(1600); smile = false
+            } finally {
+                blink = false; smile = false
+            }
         }
     }
 
     // Deliberate re-pick → a happy little reaction (one gentle nod, not a double-hop).
+    // nod() animates the single shared bobY Animatable; when a mood is applied the queue rebuild kicks
+    // playback, firing the play-transition nod() above, whose competing bobY.animateTo cancels this
+    // coroutine mid-reaction. The try/finally resets `wide`/`smile` regardless, so they never latch on —
+    // a stuck `wide` keeps `dozing` false and the mascot can't sleep when later paused.
     LaunchedEffect(burstTick) {
         if (burstTick > 0) {
-            wide = true; smile = true
-            nod()
-            delay(700); smile = false; wide = false
+            try {
+                wide = true; smile = true
+                nod()
+                delay(700)
+            } finally {
+                smile = false; wide = false
+            }
         }
     }
 

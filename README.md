@@ -6,10 +6,10 @@
 
 **music that matches how your body feels**
 
-A biometric-aware, fully on-device music player. Built for the [iKKO MindOne](https://ikko.com/), it
+A biometric-aware, fully on-device music player. Originally built for the [iKKO MindOne](https://ikko.com/), it
 runs on any Android phone paired with an Oura Ring.
-It reads your body's daily recovery from an Oura Ring, understands the *feel* of your own
-music library, and plays what fits — all wrapped in a full-screen, nostalgic MilkDrop-style visualizer.
+It reads your body's metrics, understands the *feel* of your own
+music library, and plays what fits — all wrapped in a full-screen, nostalgic Winamp visualizer.
 
 </div>
 
@@ -17,7 +17,7 @@ music library, and plays what fits — all wrapped in a full-screen, nostalgic M
 
 ## What is orbn?
 
-Most "mood" players stream someone else's catalog and react to a single number like heart rate.
+Most "mood" players use a music streaming service and react to a single number like heart rate.
 orbn is different on three counts:
 
 - **It plays *your* music** — the local files you own, not a streaming service.
@@ -31,52 +31,37 @@ simple *valence–energy* space. Your biometric state becomes a target point in 
 orbn plays the tracks that fit — then renders them as living, reactive visuals you can just stare at.
 
 **No Oura Ring, or don't want to connect one?** orbn still works. Pick a **mood** (happy, chill, sad,
-excited, angry — or just "default") and it matches songs to that feel instead of your biometrics. The
-Oura connection is an enhancement, not a requirement; either way it only ever plays the local music
+excited, angry — or just "default") and it matches songs to that feel instead of your biometrics. Either way it only ever plays the local music
 you've added to the device.
 
 ## The story
-This is my first project of a career break that began in June 2026 — built in public, partly as
-a thing I genuinely want to use, partly to learn in the open. It's a personal tool first; if it's
-useful or interesting to anyone else, all the better. Expect rough edges and frequent change.
-
-I spent almost 10 years at Twitch and I left due to personal reasons, mostly health and general burnout.
-I wrote a longer piece on [my LinkedIn](https://www.linkedin.com/feed/update/urn:li:activity:7467651824775266304/)
-if you're curious. Taking a career break in this job market is objectively unwise, and I'm aware of
-the privilege involved. 
 
 Why iKKO MindOne? I backed it on Kickstarter in August 2025 because I love small phones and I was looking 
 to replace my Jelly Star. What arrived nine months later was a device without Google Play Services, no 
 OTA updates, and no real path to being a normal phone. Rather than fight for a refund I couldn't get, I was
 inspired by cyberdecks and decided to turn this into a music player with no distractions that can read my "mood".
 
+Normally, I would not have had the time to build this but I recently started a career break that began in June 2026 
+and orbn began as an idle whim during the break and snowballed into being my first project during this time. It's partly 
+a thing I genuinely want to use, partly a mechanism to learn in the open. If it's useful or interesting to anyone else, all the better. 
+
+I wrote a longer piece on [my LinkedIn](https://www.linkedin.com/feed/update/urn:li:activity:7467651824775266304/) about how I 
+spent almost 10 years at Twitch and left due to personal reasons, mostly health and general burnout.
+
 If the idea of a music player that actually knows how you're doing seems neat to you, I'd appreciate your support:
 
 - [GitHub Sponsors](https://github.com/sponsors/earlyspark)
 - [Buy me a coffee](https://buymeacoffee.com/earlyspark)
 
-## Status
-
-🚧 **Early, but the core loop works end to end: it reads your body, plays music to match, and
-visualizes it.** On real hardware, orbn scans and analyzes your library entirely on-device (tempo,
-key, energy, mood, genre), connects to your Oura Ring to read your recovery, heart rate, and movement
-into a "how you are right now" signal, and **builds a play queue that fits that signal** — sampled
-for variety, ordered to flow, and mindful of what you've recently played so it doesn't repeat. Pull
-down to re-tune the queue to right now, or **swipe to set a mood** (happy, chill, sad, excited…) when
-you want to override what your body says and pick the feel yourself. Now-playing is a **full-screen
-MilkDrop-style visualizer (projectM) that reacts to the live audio** — tap to play/pause, double-tap to
-change the visual (a library of presets you cycle through), long-press to exit. Plays back hi-res to the
-iKKO's DAC when the case is attached. Still in the open: more UI polish.
-
 ## The device
 
-orbn is **built for the iKKO MindOne**: a small, near-square Android 15 device with a Cirrus Logic DAC,
+orbn was originally built for the iKKO MindOne: a small, near-square Android 15 device with a Cirrus Logic DAC,
 no Google services, and a focus on audio. The goal is a standalone, glanceable music player you live
-inside — with the occasional check of your Oura data — rather than a phone-style app.
+inside — with the occasional check of your Oura data.
 
-> **It isn't MindOne-only.** orbn is written as a general Android app and **also runs on other Android
-> phones** (verified on a tall, standard-aspect device) — anything device-specific (like the MindOne's
-> DAC tuning) degrades gracefully. Any Android + Oura Ring user can run it, not just iKKO owners.
+But **it isn't MindOne-only.** orbn is written as a general Android app and **also runs on other Android
+phones** (verified on a tall, standard-aspect device) — anything device-specific (like the MindOne's
+DAC tuning) degrades gracefully. Any Android + Oura Ring user can run it, not just iKKO owners.
 
 ## How it works (high level)
 
@@ -171,8 +156,6 @@ the time of the freshest reading. For this to stay current, **turn on background
 app** — your ring only reaches Oura's cloud through that app, so with background sync off orbn can
 only see data from the last time you manually opened Oura.
 
-> More detailed setup will be documented as the remaining parts of the app come together.
-
 ## Visualizer presets
 
 The bundled visualizer presets (a curated subset of projectM's Cream of the Crop) vary in how hard
@@ -202,8 +185,53 @@ one, delete its `.milk` file from `app/src/main/assets/presets/` and rebuild.
 ## Roadmap
 
 On-device music analysis → background tagging of your library → playback → Oura integration →
-biometric matching → the full-screen reactive visualizer → a manual mood picker ✅ **— done so far**
-— → **more UI polish (next)** → more.
+biometric matching → the full-screen reactive visualizer → a manual mood picker ✅ **— v1, done**
+— → **refinement & bug-fixing (next)** → more.
+
+## Status
+
+✅ **v1 is feature-complete: the full loop works end to end — it reads your body, plays music to match,
+and visualizes it.** On real hardware, orbn scans and analyzes your library entirely on-device (tempo,
+key, energy, mood, genre), connects to your Oura Ring to read your recovery, heart rate, and movement
+into a "how you are right now" signal, and **builds a play queue that fits that signal** — sampled
+for variety, ordered to flow, and mindful of what you've recently played so it doesn't repeat. Pull
+down to re-tune the queue to right now, or **swipe to set a mood** (happy, chill, sad, excited…) when
+you want to override what your body says and pick the feel yourself. Now-playing is a **full-screen
+MilkDrop-style visualizer (projectM) that reacts to the live audio** — tap to play/pause, double-tap to
+change the visual (a library of presets you cycle through), long-press to exit. Plays back hi-res to the
+iKKO's DAC when the case is attached. From here, it's refinement — polish, QA, and tuning how well
+songs match your state.
+
+## Screenshots
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center"><img src="assets/screenshots/home-mascot.png" width="230" alt="Home screen"><br><sub><b>Home</b> — your state at a glance</sub></td>
+<td align="center"><img src="assets/screenshots/home-chill.png" width="230" alt="Mood color"><br><sub><b>Mood color</b> — shifts with your energy</sub></td>
+<td align="center"><img src="assets/screenshots/home-paused.png" width="230" alt="Paused"><br><sub><b>Paused</b> — dozes when the music stops</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/screenshots/mood-picker.png" width="230" alt="Mood picker"><br><sub><b>Mood</b> — override the vibe</sub></td>
+<td align="center"><img src="assets/screenshots/why-this-track.png" width="230" alt="Why this track"><br><sub><b>Why this track</b> — the read behind the pick</sub></td>
+<td align="center"><img src="assets/screenshots/history.png" width="230" alt="History"><br><sub><b>History</b> — rate past picks</sub></td>
+</tr>
+<tr>
+<td align="center" colspan="3"><img src="assets/screenshots/visualizer.png" width="230" alt="Full-screen visualizer"><br><sub><b>Visualizer</b> — full-screen &amp; audio-reactive</sub></td>
+</tr>
+</table>
+
+**Runs on any Android phone, not just the MindOne** — here on a Jelly Max:
+
+<table>
+<tr>
+<td align="center"><img src="assets/screenshots/jellymax-add-music.png" width="200" alt="First run — add music, connect Oura"><br><sub><b>First run</b> — add music, connect Oura</sub></td>
+<td align="center"><img src="assets/screenshots/jellymax-visualizer.png" width="200" alt="Visualizer on a Jelly Max"><br><sub><b>Visualizer</b> — same experience, different device</sub></td>
+</tr>
+</table>
+
+</div>
 
 ## Author
 
