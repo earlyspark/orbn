@@ -104,13 +104,62 @@ class QueueBuilder(private val context: Context) {
         }
     }
 
-    /** Build the matched queue and set it on [player] (no-op if there's no music). Caller-agnostic. */
-    suspend fun applyTo(player: Player, autoPlay: Boolean) {
-        val items = buildItems()
-        if (items.isEmpty()) return
+    /** Build the matched queue and set it on [player]. Returns false (no-op) if there's no music. */
+    suspend fun applyTo(player: Player, autoPlay: Boolean): Boolean = setQueue(player, buildItems(), autoPlay)
+
+    /**
+     * A randomly-shuffled queue of the analyzed library (folder fallback if nothing's analyzed) — used by
+     * [reMatch] when there's nothing to match on (no Oura connection AND Default mood). False if no music.
+     */
+    suspend fun applyRandom(player: Player, autoPlay: Boolean): Boolean {
+        val tracks = db.trackDao().analyzed()
+        val items = if (tracks.isEmpty()) folderItems().shuffled()
+        else tracks.shuffled().take(QUEUE_SIZE)
+            .map { mediaItemFor(it.path, it.title ?: titleOf(it.path), it.artist ?: artistOf(it.path)) }
+        return setQueue(player, items, autoPlay)
+    }
+
+    private fun setQueue(player: Player, items: List<MediaItem>, autoPlay: Boolean): Boolean {
+        if (items.isEmpty()) return false
         player.setMediaItems(items)
         player.prepare()
         if (autoPlay) player.play()
+        return true
+    }
+
+    private fun mediaItemFor(path: String, title: String?, artist: String?): MediaItem =
+        MediaItem.Builder()
+            .setUri(Uri.fromFile(File(path)))
+            .setMediaId(path)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist).build())
+            .build()
+
+    /** Whether there's any playable music at all (analyzed or just dropped in the folder). */
+    suspend fun hasMusic(): Boolean = db.trackDao().analyzed().isNotEmpty() || folderItems().isNotEmpty()
+
+    /** Outcome of [reMatch] so the caller can show the right banner. NONE = no music (did nothing). */
+    enum class ReMatch { BIOMETRIC, MOOD, RANDOM, NONE }
+
+    /**
+     * Shared swipe-down rematch (home + viz): pick a fresh song, keeping play/pause via [autoPlay].
+     *  - Oura connected → re-read Oura, biometric match.
+     *  - else a manual mood is set → match to that mood.
+     *  - else (Default + no Oura) → a random song (nothing to match on).
+     * No music at all → [ReMatch.NONE] (the gesture does nothing).
+     */
+    suspend fun reMatch(player: Player, autoPlay: Boolean): ReMatch {
+        if (!hasMusic()) return ReMatch.NONE
+        val repo = Oura.repository(context)
+        val connected = repo.isConnected
+        if (connected) runCatching { repo.refresh() }
+        val random = !connected && manualMood() == null
+        val applied = if (random) applyRandom(player, autoPlay) else applyTo(player, autoPlay)
+        return when {
+            !applied -> ReMatch.NONE
+            connected -> ReMatch.BIOMETRIC
+            manualMood() != null -> ReMatch.MOOD
+            else -> ReMatch.RANDOM
+        }
     }
 
     /** Plain folder listing (audio files only) — the fallback before anything is analyzed. */

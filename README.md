@@ -4,7 +4,8 @@
 
 **music that matches how your body feels**
 
-A biometric-aware, fully on-device music player for the [iKKO MindOne](https://ikko.com/).
+A biometric-aware, fully on-device music player. Built for the [iKKO MindOne](https://ikko.com/), it
+runs on any Android phone paired with an Oura Ring.
 It reads your body's daily recovery from an Oura Ring, understands the *feel* of your own
 music library, and plays what fits — all wrapped in a full-screen, nostalgic MilkDrop-style visualizer.
 
@@ -20,12 +21,17 @@ orbn is different on three counts:
 - **It plays *your* music** — the local files you own, not a streaming service.
 - **It understands how you are** — using your Oura Ring's overnight recovery/HRV as a daily
   baseline, nudged by your heart rate and movement through the day.
-- **It runs entirely on the device** — analysis, matching, and visuals all happen locally on the
-  MindOne. No cloud, no account, no data leaving the device.
+- **It runs entirely on the device** — analysis, matching, and visuals all happen locally on your
+  phone. No cloud, no account, no data leaving the device.
 
 Under the hood, orbn analyzes each song once (tempo, key, energy, mood, genre) and places it in a
 simple *valence–energy* space. Your biometric state becomes a target point in that same space, and
 orbn plays the tracks that fit — then renders them as living, reactive visuals you can just stare at.
+
+**No Oura Ring, or don't want to connect one?** orbn still works. Pick a **mood** (happy, chill, sad,
+excited, angry — or just "default") and it matches songs to that feel instead of your biometrics. The
+Oura connection is an enhancement, not a requirement; either way it only ever plays the local music
+you've added to the device.
 
 ## The story
 This is my first project of a career break that began in June 2026 — built in public, partly as
@@ -62,12 +68,13 @@ iKKO's DAC when the case is attached. Still in the open: more UI polish.
 
 ## The device
 
-orbn targets the **iKKO MindOne**: a small, near-square Android 15 device with a Cirrus Logic DAC,
+orbn is **built for the iKKO MindOne**: a small, near-square Android 15 device with a Cirrus Logic DAC,
 no Google services, and a focus on audio. The goal is a standalone, glanceable music player you live
 inside — with the occasional check of your Oura data — rather than a phone-style app.
 
-> orbn is being developed on the iKKO MindOne but is written as a general Android app —
-> the intention is for it to work for any Android + Oura Ring user, not just iKKO owners.
+> **It isn't MindOne-only.** orbn is written as a general Android app and **also runs on other Android
+> phones** (verified on a tall, standard-aspect device) — anything device-specific (like the MindOne's
+> DAC tuning) degrades gracefully. Any Android + Oura Ring user can run it, not just iKKO owners.
 
 ## How it works (high level)
 
@@ -102,6 +109,26 @@ orbn is an Android app. You'll need Android Studio (or the Android SDK + NDK) an
 
 The native dependencies are large prebuilt binaries kept out of git; the script fetches them
 from a GitHub Release and unpacks them where the build expects.
+
+### Adding your music
+
+orbn plays the local files you own. There are two ways to get them in:
+
+- **In-app (recommended, works on any phone):** tap **"add music"** on the home screen and pick the
+  tracks from anywhere on your device — Downloads, internal storage, an SD card, or a cloud provider.
+- **Manually:** copy audio files over USB into the app's folder at
+  `Android/data/com.earlyspark.orbn/files/Music/`. Note that some phones hide `Android/data` from a
+  computer's file browser — if you can't see it, use the in-app picker instead (or copy to your
+  Downloads folder and import from there).
+
+Either way, **orbn copies the files into its own folder** — your originals are never touched or
+modified. Because they live inside the app, **uninstalling orbn deletes its copies** (re-importing is
+quick). Supported: `mp3`, `flac`, `m4a`, `aac`, `ogg`, `wav`.
+
+**How analysis works:** when you add music, orbn analyzes each track in the background — tempo, key,
+energy, and mood — entirely on-device (nothing is uploaded). The home screen shows the progress
+(`tagging your library… 3 / 12`), and a track becomes available to play once it's been analyzed. It's
+roughly a few seconds per track and resumes automatically if interrupted.
 
 ### Connecting Oura
 

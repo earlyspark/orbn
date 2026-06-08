@@ -5,10 +5,14 @@ import android.content.Intent
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -41,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -86,11 +91,14 @@ import com.earlyspark.orbn.ui.MoodSheet
 import com.earlyspark.orbn.ui.RefreshBanner
 import com.earlyspark.orbn.ui.WhyThisTrackSheet
 import com.earlyspark.orbn.visualizer.VisualizerActivity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.math.abs
 
 private val OrbnBg = Color(0xFF0A0A0F)
@@ -101,6 +109,12 @@ class MainActivity : ComponentActivity() {
     private val queueBuilder by lazy { QueueBuilder(applicationContext) }
     private lateinit var audioManager: AudioManager
     private var audioCallback: AudioDeviceCallback? = null
+
+    // SAF "add music" picker: the user selects audio from anywhere on the device (Downloads, internal
+    // storage, SD, cloud) and orbn COPIES it into its own Music folder — no storage permission needed.
+    private val importMusic = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> if (!uris.isNullOrEmpty()) importMusicFiles(uris) }
 
     private var controller: MediaController? = null
     private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
@@ -113,6 +127,10 @@ class MainActivity : ComponentActivity() {
     private val startedCurrent = MutableStateFlow(false)
     // One-shot orb "burst" trigger: a counter bumped on deliberate re-picks (rematch / mood / 👎-skip).
     private val orbBurst = MutableStateFlow(0)
+    // One-shot "nudge the add-music CTA" trigger: bumped when the orb is tapped with no library yet.
+    private val addMusicNudge = MutableStateFlow(0)
+    // Latest library size, cached from the count Flow so onOrbTap can branch without a suspend read.
+    @Volatile private var libraryTotal = 0
 
     // Biometric readout (plain language) + the numeric Oura energy that drives the reactive orb.
     private val ouraLine = MutableStateFlow("")
@@ -149,6 +167,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         repository = LibraryRepository(applicationContext)
         manualMood.value = queueBuilder.manualMood()
+        // Keep the cached library size current for onOrbTap's "no music yet" branch.
+        lifecycleScope.launch { repository.totalCount.collect { libraryTotal = it } }
 
         // M3 spike: log output-device capabilities now, and again whenever a device is
         // plugged/unplugged — so attaching the CS43198 dock prints the bit-perfect verdict live.
@@ -163,9 +183,6 @@ class MainActivity : ComponentActivity() {
             }
         }
         audioManager.registerAudioDeviceCallback(audioCallback, null)
-
-        // Scan the library, then kick off background tagging for anything new.
-        rescanAndTag()
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = OrbnBg)) {
@@ -188,6 +205,7 @@ class MainActivity : ComponentActivity() {
                         manualMood = manualMood,
                         ouraEnergy = ouraEnergy,
                         orbBurst = orbBurst,
+                        addMusicNudge = addMusicNudge,
                         onTap = ::onOrbTap,
                         onLongPress = { startActivity(Intent(this@MainActivity, VisualizerActivity::class.java)) },
                         onSwipeUp = ::openWhyThisTrack,
@@ -195,6 +213,7 @@ class MainActivity : ComponentActivity() {
                         onSwipeLeft = { showOverride.value = true },
                         onSwipeRight = ::openHistory,
                         onOuraTap = ::onOuraTap,
+                        onAddMusic = ::launchAddMusic,
                     )
                     RefreshBanner(message = bannerMsg)
                     MoodSheet(
@@ -222,6 +241,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        // Reconcile the music folder on every return-to-foreground (not just a cold start), so files
+        // added while the app was backgrounded — a USB drop or the in-app import — get detected and
+        // tagged. scan() is a cheap folder-walk + DB reconcile; unchanged files are a no-op lookup.
+        rescanAndTag()
         // Connect to the playback service; load the library once the controller is ready.
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         val future = MediaController.Builder(this, token).buildAsync()
@@ -270,6 +293,9 @@ class MainActivity : ComponentActivity() {
     private fun onOrbTap() {
         val c = controller ?: return
         when {
+            // No library yet → there's nothing to play; pulse the "add music" CTA instead of
+            // silently building an empty queue.
+            c.mediaItemCount == 0 && libraryTotal == 0 -> addMusicNudge.value++
             c.mediaItemCount == 0 -> lifecycleScope.launch { buildMatchedQueueInto(c, autoPlay = true) }
             c.isPlaying -> c.pause()
             else -> c.play()
@@ -288,14 +314,21 @@ class MainActivity : ComponentActivity() {
      */
     private fun reMatch() {
         val c = controller ?: return
+        if (libraryTotal == 0) return // no music → the refresh gesture does nothing
         lifecycleScope.launch {
-            showBanner("Re-tuning to how you are now…")
-            runCatching { Oura.repository(applicationContext).refresh() } // pull latest; no-op if not connected
             val wasPlaying = c.isPlaying
-            buildMatchedQueueInto(c, autoPlay = wasPlaying)
+            // Optimistic "working on it" banner only when we'll actually re-read Oura over the network.
+            if (Oura.repository(applicationContext).isConnected) showBanner("Re-tuning to how you are now…")
+            when (queueBuilder.reMatch(c, autoPlay = wasPlaying)) {
+                QueueBuilder.ReMatch.NONE -> return@launch // nothing playable → leave it be
+                QueueBuilder.ReMatch.BIOMETRIC -> {
+                    refreshOuraStatus(forceNetwork = false) // refresh the readout from the new cache
+                    showBanner("Re-matched · feeling ${energyWord(queueBuilder.currentTarget().energyCenter)}")
+                }
+                QueueBuilder.ReMatch.MOOD -> showBanner("Finding a different song based on Mood")
+                QueueBuilder.ReMatch.RANDOM -> showBanner("Finding a random song")
+            }
             triggerBurst() // deliberate re-pick → orb flourish
-            refreshOuraStatus(forceNetwork = false) // refresh the readout line from the new cache
-            showBanner("Re-matched · feeling ${energyWord(queueBuilder.currentTarget().energyCenter)}")
         }
     }
 
@@ -374,6 +407,77 @@ class MainActivity : ComponentActivity() {
             triggerBurst() // a new song was picked → orb flourish
         }
         showBanner("Skipped — noted for next time")
+    }
+
+    /** Open the system file picker for audio (SAF — no storage permission). Result → [importMusicFiles]. */
+    private fun launchAddMusic() {
+        runCatching { importMusic.launch(arrayOf("audio/*")) }
+            .onFailure { showBanner("No file picker available") }
+    }
+
+    /**
+     * Copy each picked file into orbn's Music folder (on IO), then rescan + tag. The originals are left
+     * untouched; orbn owns its copies (they're removed if the app is uninstalled). Banner shows progress.
+     */
+    private fun importMusicFiles(uris: List<Uri>) {
+        lifecycleScope.launch {
+            showBanner("Importing ${uris.size} ${if (uris.size == 1) "song" else "songs"}…")
+            val added = withContext(Dispatchers.IO) { copyIntoMusicFolder(uris) }
+            if (added > 0) {
+                rescanAndTag() // register the new files + kick off background analysis
+                showBanner("Added $added · analyzing in the background")
+            } else {
+                showBanner("Couldn't import those files")
+            }
+        }
+    }
+
+    /** Stream each content URI into a uniquely-named file in the Music folder. Returns the count copied. */
+    private suspend fun copyIntoMusicFolder(uris: List<Uri>): Int = withContext(Dispatchers.IO) {
+        val dir = repository.musicDir()?.apply { mkdirs() } ?: return@withContext 0
+        var added = 0
+        for (uri in uris) {
+            val name = displayName(uri) ?: continue
+            val target = uniqueFile(dir, name)
+            runCatching {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                } ?: error("no input stream")
+                added++
+            }.onFailure {
+                Log.w("OrbnImport", "import failed for $name: ${it.message}")
+                target.delete() // don't leave a half-written file behind
+            }
+        }
+        added
+    }
+
+    /** The picked file's display name (e.g. "song.mp3"), or the URI's last path segment as a fallback. */
+    private fun displayName(uri: Uri): String? {
+        val raw = run {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && c.moveToFirst()) c.getString(idx)?.let { return@run it }
+            }
+            uri.lastPathSegment
+        } ?: return null
+        // Reduce to a bare filename: never let a provider-supplied name with path separators ("../…")
+        // escape the Music folder when used in File(dir, name).
+        return raw.substringAfterLast('/').substringAfterLast('\\').trim().ifBlank { null }
+    }
+
+    /** Avoid clobbering an existing file: "song.mp3" → "song (1).mp3" if taken. */
+    private fun uniqueFile(dir: File, name: String): File {
+        var f = File(dir, name)
+        if (!f.exists()) return f
+        val base = name.substringBeforeLast('.', name)
+        val ext = name.substringAfterLast('.', "")
+        var i = 1
+        while (f.exists()) {
+            f = File(dir, if (ext.isEmpty()) "$base ($i)" else "$base ($i).$ext")
+            i++
+        }
+        return f
     }
 
     /** Reconcile the folder with the DB, then enqueue the (resumable) tagging job. */
@@ -471,6 +575,7 @@ fun OrbnHome(
     manualMood: Flow<Mood?>,
     ouraEnergy: Flow<Float?>,
     orbBurst: Flow<Int>,
+    addMusicNudge: Flow<Int>,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     onSwipeUp: () -> Unit,
@@ -478,6 +583,7 @@ fun OrbnHome(
     onSwipeLeft: () -> Unit,
     onSwipeRight: () -> Unit,
     onOuraTap: () -> Unit,
+    onAddMusic: () -> Unit,
 ) {
     val total by totalCount.collectAsState(initial = 0)
     val analyzed by analyzedCount.collectAsState(initial = 0)
@@ -522,13 +628,21 @@ fun OrbnHome(
     }
     val bv = burst.value
 
-    // The now-playing line (♪ + artist – title) is built in the Text below when a track is loaded;
-    // these are the no-track-loaded states.
-    val status = when {
-        analyzed < total -> "tagging your library…  $analyzed / $total"
-        total > 0 -> "tap to play · $total tracks"
-        else -> "drop music in the orbn folder"
+    // One-shot "nudge" on the add-music CTA: a gentle scale + brighten when the orb is tapped with no
+    // library yet. Single soft pulse (no strobe — photosensitivity).
+    val nudgeTick by addMusicNudge.collectAsState(initial = 0)
+    val nudge = remember { Animatable(0f) }
+    LaunchedEffect(nudgeTick) {
+        if (nudgeTick > 0) {
+            nudge.animateTo(1f, tween(durationMillis = 160, easing = LinearOutSlowInEasing))
+            nudge.animateTo(0f, tween(durationMillis = 520, easing = FastOutSlowInEasing))
+        }
     }
+
+    // The now-playing line (♪ + artist – title) is built below when a track is loaded. With no track,
+    // an empty library shows the "add music" CTA; otherwise this "tap to play" status. (Tagging progress
+    // is its own line pinned at the bottom, below the readout.)
+    val status = "tap to play · $total tracks"
     // The readout always shows your body state (feeling / readiness / synced), even when a manual
     // mood is set — the mood drives the orb + queue, but never rewrites this line.
     val bioLine = oura
@@ -612,26 +726,54 @@ fun OrbnHome(
             }
             val t = track
             val a = artist
-            // Now-playing line: a persistent ♪ (brighter while actually playing) + "artist – title".
-            // Capped at 90% screen width; marquees if it overflows.
-            Text(
-                text = if (t != null) buildAnnotatedString {
-                    val noteColor = if (playing) Color(0xFFB4C4E8) else Color(0xFF8A93A6)
-                    withStyle(SpanStyle(fontSize = 18.sp, color = noteColor)) { append("♪") }
-                    append("  ")
-                    append(if (!a.isNullOrBlank()) "$a – $t" else t)
-                } else AnnotatedString(status),
-                color = Color(0xFF7C8499),
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Clip,
-                modifier = Modifier
-                    .padding(top = 6.dp)
-                    .widthIn(max = (LocalConfiguration.current.screenWidthDp * 0.9f).dp)
-                    .basicMarquee(),
-            )
+            when {
+                // Now-playing line: a persistent ♪ (brighter while actually playing) + "artist – title".
+                // Capped at 90% screen width; marquees if it overflows.
+                t != null -> Text(
+                    text = buildAnnotatedString {
+                        val noteColor = if (playing) Color(0xFFB4C4E8) else Color(0xFF8A93A6)
+                        withStyle(SpanStyle(fontSize = 18.sp, color = noteColor)) { append("♪") }
+                        append("  ")
+                        append(if (!a.isNullOrBlank()) "$a – $t" else t)
+                    },
+                    color = Color(0xFF7C8499),
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Clip,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .widthIn(max = (LocalConfiguration.current.screenWidthDp * 0.9f).dp)
+                        .basicMarquee(),
+                )
+                // Empty library → tappable CTA that opens the SAF picker to import music. (A persistent
+                // "add more" entry point lives in M10 settings; this is the onboarding affordance.)
+                // Styled like the "tap to play" status line, just clickable.
+                total == 0 -> {
+                    val nv = nudge.value
+                    Text(
+                        text = "add music",
+                        // Match the "tap to play" play-state cue (brighter + Medium), not the dim
+                        // song-info line; the nudge brightens it further toward white.
+                        color = lerp(Color(0xFFAEB6C7), Color(0xFFE8ECF5), nv),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .scale(1f + 0.18f * nv)
+                            .clickable { onAddMusic() },
+                    )
+                }
+                // Tagging in progress, or library ready to play.
+                else -> Text(
+                    text = status,
+                    color = Color(0xFF7C8499),
+                    fontSize = 12.sp,
+                    textAlign = TextAlign.Center,
+                )
+            }
             if (bioLine.isNotBlank()) {
                 val ouraModifier = Modifier
                     .padding(top = 12.dp, start = 32.dp, end = 32.dp)
@@ -642,6 +784,17 @@ fun OrbnHome(
                     fontSize = 12.sp,
                     textAlign = TextAlign.Center,
                     modifier = ouraModifier
+                )
+            }
+            // Library analysis progress — pinned at the bottom, below the readout, while tagging runs
+            // (home only; the viz never shows it). Hidden once everything's analyzed.
+            if (analyzed < total) {
+                Text(
+                    text = "tagging your library…  $analyzed / $total",
+                    color = Color(0xFF5A6173),
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 12.dp),
                 )
             }
         }

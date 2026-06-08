@@ -10,8 +10,10 @@ import java.time.format.DateTimeFormatter
  * place so the two never drift. Plain language (D24): `feeling balanced · well recovered · synced
  * 2:56 PM`, not raw numbers. The raw energy/valence numbers live only in the "why this track" detail.
  */
-fun biometricReadout(state: BiometricState?): String {
-    if (state == null) return "Oura connected · tap to sync"
+fun biometricReadout(state: BiometricState?, connected: Boolean = true): String {
+    // No state yet: distinguish "authorized but nothing synced" from "never connected" so the
+    // visualizer overlay can't claim a connection the user never made (matches the home line).
+    if (state == null) return if (connected) "Oura connected · tap to sync" else "tap to connect Oura"
     val energy = "feeling ${energyWord(state.energyCenter)}"
     val readiness = readinessWord(state.diagnostics.readinessScore)
     val synced = state.syncedAt?.let { "synced ${syncedAtLabel(it)}" }

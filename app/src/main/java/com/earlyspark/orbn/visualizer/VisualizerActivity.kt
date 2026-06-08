@@ -6,9 +6,11 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.util.Log
 import android.view.Gravity
+import android.view.View
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.view.ViewGroup
@@ -80,6 +82,7 @@ class VisualizerActivity : ComponentActivity() {
     private val vizPrefs by lazy { getSharedPreferences("orbn_viz", MODE_PRIVATE) }
     private lateinit var presetLabel: TextView
     private lateinit var statusBox: LinearLayout
+    private lateinit var stateLine: TextView
     private lateinit var trackLine: TextView
     private lateinit var bioLine: TextView
 
@@ -264,11 +267,20 @@ class VisualizerActivity : ComponentActivity() {
 
     /** The paused-state overlay: now-playing line + the shared biometric readout (no "orbn" title). */
     private fun buildStatusBox(): LinearLayout {
+        // Three stacked lines like the home screen: play-state cue / song name / biometric readout.
+        stateLine = TextView(this).apply {
+            setTextColor(0xFFEAEFF7.toInt()) // near-white, the brighter play-state cue
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD)
+            setShadowLayer(8f, 0f, 0f, Color.BLACK)
+        }
         trackLine = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 15f
             gravity = Gravity.CENTER
             setShadowLayer(8f, 0f, 0f, Color.BLACK)
+            setPadding(0, 4, 0, 0)
         }
         bioLine = TextView(this).apply {
             setTextColor(0xFF7FB0FF.toInt()) // soft blue, matching the home readout accent
@@ -281,6 +293,7 @@ class VisualizerActivity : ComponentActivity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setPadding(48, 0, 48, 0)
+            addView(stateLine)
             addView(trackLine)
             addView(bioLine)
             alpha = 0f
@@ -293,11 +306,32 @@ class VisualizerActivity : ComponentActivity() {
             statusBox.animate().alpha(0f).setDuration(400L).start()
             return
         }
-        val track = controller?.currentMediaItem?.mediaMetadata?.title?.toString()
-        trackLine.text = track?.let { "paused · $it" } ?: "paused"
         lifecycleScope.launch {
-            val state = runCatching { Oura.repository(this@VisualizerActivity).currentState() }.getOrNull()
-            bioLine.text = biometricReadout(state)
+            if (!queueBuilder.hasMusic()) {
+                // Dead-end: nothing to play or visualize here. Point the user out (exit = long-press);
+                // music is added back on the home screen.
+                stateLine.text = ""
+                trackLine.text = "long-press to go back"
+                bioLine.text = ""
+            } else {
+                val c = controller
+                val md = c?.currentMediaItem?.mediaMetadata
+                val title = md?.title?.toString()
+                val artist = md?.artist?.toString()
+                // Stacked like home: state word / song / readout. "paused" only once the track has
+                // actually started (position > 0); a fresh, queued-but-unstarted track says "tap to play".
+                stateLine.text = if ((c?.currentPosition ?: 0L) > 0L) "paused" else "tap to play"
+                trackLine.text = title?.let { if (!artist.isNullOrBlank()) "$artist – $it" else it } ?: ""
+                // Show the biometric readout only when there's real Oura data — never the
+                // "tap to connect Oura" prompt (you can't connect from inside the viz).
+                val repo = Oura.repository(this@VisualizerActivity)
+                val state = if (repo.isConnected) runCatching { repo.currentState() }.getOrNull() else null
+                bioLine.text = state?.let { biometricReadout(it) } ?: ""
+            }
+            // Collapse empty lines so there are no phantom gaps between the three.
+            listOf(stateLine, trackLine, bioLine).forEach {
+                it.visibility = if (it.text.isNullOrEmpty()) View.GONE else View.VISIBLE
+            }
         }
         statusBox.animate().cancel()
         statusBox.animate().alpha(1f).setDuration(300L).start()
@@ -390,14 +424,18 @@ class VisualizerActivity : ComponentActivity() {
         lifecycleScope.launch { whyThisTrack.value = queueBuilder.whyThisTrack(path, title, artist) }
     }
 
-    /** Swipe-down rematch: pull fresh Oura, rebuild the queue, keep play/pause state. */
+    /** Swipe-down rematch (parity with home): biometric if Oura's on, else mood, else random. */
     private fun reMatch() {
         val c = controller ?: return
         lifecycleScope.launch {
-            showBanner("Re-tuning to how you are now…")
-            runCatching { Oura.repository(this@VisualizerActivity).refresh() }
-            queueBuilder.applyTo(c, autoPlay = c.isPlaying)
-            showBanner("Re-matched · feeling ${energyWord(queueBuilder.currentTarget().energyCenter)}")
+            if (Oura.repository(this@VisualizerActivity).isConnected) showBanner("Re-tuning to how you are now…")
+            when (queueBuilder.reMatch(c, autoPlay = c.isPlaying)) {
+                QueueBuilder.ReMatch.NONE -> {} // no music → do nothing
+                QueueBuilder.ReMatch.BIOMETRIC ->
+                    showBanner("Re-matched · feeling ${energyWord(queueBuilder.currentTarget().energyCenter)}")
+                QueueBuilder.ReMatch.MOOD -> showBanner("Finding a different song based on Mood")
+                QueueBuilder.ReMatch.RANDOM -> showBanner("Finding a random song")
+            }
         }
     }
 
