@@ -37,6 +37,13 @@ class TaggingWorker(
         val start = System.currentTimeMillis()
         var done = 0
         for (track in pending) {
+            // Hold off while the visualizer is foreground: analysis is memory-heavy
+            // and competing with the GL visualizer + playback can trip the OOM killer.
+            // Re-checked each track (the native call can't be interrupted mid-track).
+            if (AnalysisGate.isVisualizerActive()) {
+                Log.i(TAG, "Visualizer foreground after $done; backing off tagging.")
+                return Result.retry()
+            }
             if (System.currentTimeMillis() - start > BUDGET_MS) {
                 Log.i(TAG, "Time budget hit after $done; rescheduling for the rest.")
                 return Result.retry()

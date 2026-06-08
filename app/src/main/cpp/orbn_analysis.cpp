@@ -48,6 +48,7 @@ static double elapsed_ms(clk::time_point a, clk::time_point b) {
 static constexpr int   MUSICNN_PATCH_FRAMES = 187;
 static constexpr int   MUSICNN_MEL_BANDS    = 96;
 static constexpr int   EMB_DIM              = 200;
+static constexpr int   EMB_BATCH            = 32;      // patches per ORT run; caps peak memory
 static constexpr int   TARGET_SR            = 16000;   // Essentia TensorflowInputMusiCNN SR
 static constexpr int   FRAME_SIZE           = 512;
 static constexpr int   HOP_SIZE             = 256;
@@ -394,25 +395,36 @@ Java_com_earlyspark_orbn_analysis_AudioAnalyzer_analyzeTrack(
     Ort::Session embSess(ortEnv, embBuf.data(), embBuf.size(), so);
 
     auto memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    std::vector<int64_t> embShape = {nPatches, MUSICNN_PATCH_FRAMES, MUSICNN_MEL_BANDS};
-    Ort::Value embInput = Ort::Value::CreateTensor<float>(
-        memInfo, melFlat.data(), melFlat.size(), embShape.data(), embShape.size());
-
     const char* embInNames[]  = {"melspectrogram"};
     const char* embOutNames[] = {"embeddings"};
-    auto t6 = clk::now();
-    auto embOut = embSess.Run(Ort::RunOptions{nullptr},
-                              embInNames, &embInput, 1, embOutNames, 1);
-    auto t7 = clk::now();
 
-    // Mean-pool embeddings over patches → [200]
-    float* embData = embOut[0].GetTensorMutableData<float>();
+    // Run the embedding model in fixed-size mini-batches and mean-pool patches
+    // incrementally. Peak inference memory scales with the batch dimension, so
+    // feeding a whole track at once makes a long track (hundreds of patches)
+    // allocate multiple GB of intermediate activations — enough to trip the
+    // low-memory killer on a modest device. Capping the batch bounds peak memory
+    // to a constant regardless of track length; the mean over patches is
+    // associative, so the result is identical to a single full-track run.
+    const size_t patchSize = (size_t)MUSICNN_PATCH_FRAMES * MUSICNN_MEL_BANDS;
     std::vector<float> meanEmb(EMB_DIM, 0.f);
-    for (int k = 0; k < nPatches; ++k)
-        for (int d = 0; d < EMB_DIM; ++d)
-            meanEmb[d] += embData[k * EMB_DIM + d];
+    auto t6 = clk::now();
+    for (int start = 0; start < nPatches; start += EMB_BATCH) {
+        int batch = std::min(EMB_BATCH, nPatches - start);
+        std::vector<int64_t> embShape = {batch, MUSICNN_PATCH_FRAMES, MUSICNN_MEL_BANDS};
+        Ort::Value embInput = Ort::Value::CreateTensor<float>(
+            memInfo, melFlat.data() + (size_t)start * patchSize,
+            (size_t)batch * patchSize, embShape.data(), embShape.size());
+        auto embOut = embSess.Run(Ort::RunOptions{nullptr},
+                                  embInNames, &embInput, 1, embOutNames, 1);
+        const float* embData = embOut[0].GetTensorMutableData<float>();
+        for (int k = 0; k < batch; ++k)
+            for (int d = 0; d < EMB_DIM; ++d)
+                meanEmb[d] += embData[k * EMB_DIM + d];
+    }
     for (auto& v : meanEmb) v /= (float)nPatches;
-    LOGI("ORT embedding: %.1f ms", elapsed_ms(t6, t7));
+    auto t7 = clk::now();
+    LOGI("ORT embedding: %.1f ms (%d patches, batch %d)",
+         elapsed_ms(t6, t7), nPatches, EMB_BATCH);
 
     // Run the classification heads (each tiny; all consume the same embedding).
     // Class orderings differ per head (from each model's metadata):

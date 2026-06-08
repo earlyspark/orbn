@@ -34,6 +34,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.earlyspark.orbn.library.AnalysisGate
 import com.earlyspark.orbn.match.Mood
 import com.earlyspark.orbn.match.QueueBuilder
 import com.earlyspark.orbn.model.HistoryEntry
@@ -235,11 +236,14 @@ class VisualizerActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Hold off memory-heavy background tagging while the GL visualizer is up.
+        AnalysisGate.setVisualizerActive(true)
         hideSystemBars() // bars can reappear after some system interactions
         glView.onResume()
     }
 
     override fun onPause() {
+        AnalysisGate.setVisualizerActive(false) // let background tagging resume
         // Tear projectM down on the GL thread (context still current) before pausing rendering.
         glView.queueEvent { renderer.destroyOnGlThread() }
         glView.onPause()
