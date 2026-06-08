@@ -40,6 +40,12 @@ data class BiometricState(
     /** Inputs that shaped the target — surfaced in the UI's "why this track", never in matching. */
     data class Diagnostics(
         val readinessScore: Int? = null,
+        /**
+         * Whether [readinessScore] is from today. Readiness is an overnight metric; if the latest
+         * daily is from a prior day (e.g. the ring wasn't worn last night), the score is stale and
+         * the readout should drop the recovery word rather than present yesterday's as current.
+         */
+        val readinessFresh: Boolean = true,
         val restingHr: Int? = null,
         val latestHr: Int? = null,
         val hrvMs: Int? = null,

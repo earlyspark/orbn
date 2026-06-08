@@ -77,9 +77,23 @@ class OuraRepository(
             val fetchedAt = System.currentTimeMillis()
             val day = readiness?.day ?: sleep?.day ?: dailySleep?.day ?: today.toString()
 
-            // Latest intra-day movement: most recent non-null MET sample + current 5-min activity class.
-            val metLatest = activity?.met?.items?.lastOrNull { it != null }?.toFloat()
-            val activityClass = activity?.class5Min?.lastOrNull { it.isDigit() }?.digitToIntOrNull()
+            // Intra-day movement at *now*: met.items spans the whole Oura day (04:00 → 04:00 next day),
+            // pre-sized to 1-min slots with trailing filler — so "last non-null" is the end-of-day
+            // filler (a flat ~0.9), not the current minute. Index by elapsed time from the series start
+            // and take the latest real sample at or before now.
+            val metSeries = activity?.met
+            val metStartTime = metSeries?.timestamp?.let { runCatching { OffsetDateTime.parse(it) }.getOrNull() }
+            val elapsedMin = metStartTime?.let { ((now.toEpochSecond() - it.toEpochSecond()) / 60).toInt() }
+            val metLatest = metSeries?.items?.let { items ->
+                val upTo = elapsedMin?.let { (it + 1).coerceIn(0, items.size) } ?: items.size
+                items.take(upTo).lastOrNull { it != null }
+            }?.toFloat()
+            // class_5_min shares the day anchor (5-min blocks); index the current block the same way.
+            // (takeIf non-empty: an empty string would make coerceIn(0, -1) throw.)
+            val activityClass = activity?.class5Min?.takeIf { it.isNotEmpty() }?.let { classes ->
+                val idx5 = elapsedMin?.let { (it / 5).coerceIn(0, classes.length - 1) } ?: (classes.length - 1)
+                classes.getOrNull(idx5)?.takeIf { it.isDigit() }?.digitToIntOrNull()
+            }
 
             dao.upsertDaily(
                 listOf(
@@ -161,6 +175,9 @@ class OuraRepository(
         // arousal below (D14 mirror; readiness is capacity, a different axis — SPEC §13). Well-
         // recovered → a wider band (room to range); depleted → narrow (keep it gentle). Missing → mid.
         val readiness = daily.readinessScore
+        // Readiness is from the daily row's date; if that isn't today (e.g. no ring last night), the
+        // score is stale and the readout drops the recovery word rather than show yesterday's as now.
+        val readinessFresh = daily.day == LocalDate.now().toString()
         val baseBand: Float = if (readiness != null) {
             val r = readiness.coerceIn(0, 100) / 100f
             0.12f + r * 0.18f   // 0.12 (narrow, depleted) .. 0.30 (wide, fully recovered)
@@ -180,8 +197,11 @@ class OuraRepository(
         // stronger cue and reads at full strength, while pure light movement reads a touch gentler.
         val restingHr = daily.restingHr
         val hrFrac = if (source != null && restingHr != null) {
-            val span = (DEFAULT_MAX_HR - restingHr).coerceAtLeast(1)
-            ((source.bpm - restingHr).toFloat() / span).coerceIn(0f, 1f)
+            // Scale against a realistic *daytime* span, not max HR: resting → fully-activated lands at
+            // restingHr + DAYTIME_HR_SPAN (~a brisk-walk heart rate), so ordinary HR swings actually
+            // move the readout. Against max HR (190) the whole awake range compressed into the bottom
+            // ~25% and pinned everything to "mellow".
+            ((source.bpm - restingHr).toFloat() / DAYTIME_HR_SPAN).coerceIn(0f, 1f)
         } else null
         val metFrac = daily.metLatest?.let {
             ((it - MET_REST) / (MET_VIGOROUS - MET_REST)).coerceIn(0f, 1f) * MET_WEIGHT
@@ -213,6 +233,7 @@ class OuraRepository(
             syncedAt = syncedAt,
             diagnostics = BiometricState.Diagnostics(
                 readinessScore = readiness,
+                readinessFresh = readinessFresh,
                 restingHr = restingHr,
                 latestHr = source?.bpm,
                 hrvMs = hrv,
@@ -268,8 +289,12 @@ class OuraRepository(
         /** Freshness gate: don't re-fetch within this window (≈ Oura's 5-min HR cadence). */
         const val DEFAULT_STALE_MILLIS = 5 * 60 * 1000L
         const val HR_WINDOW_HOURS = 6L
-        /** Cold-start ceiling for the HRR denominator until the user's own HR history refines it (M5). */
-        const val DEFAULT_MAX_HR = 190
+        /**
+         * BPM above resting that reads as fully activated. Sized to the *daytime* range (rest → brisk
+         * activity), not max HR — so everyday HR changes are expressive rather than pinned to the
+         * bottom of the scale. This is the main sensitivity knob for the energy readout.
+         */
+        const val DAYTIME_HR_SPAN = 40f
         /** Max upward energy shift from a fully elevated heart rate / movement. */
         const val RESTING_CENTER = 0.30f // energy center at rest (no arousal) — calm but awake
         const val AROUSAL_SPAN = 0.55f   // how far live arousal lifts the center (0.30 .. 0.85)

@@ -15,7 +15,13 @@ fun biometricReadout(state: BiometricState?, connected: Boolean = true): String 
     // visualizer overlay can't claim a connection the user never made (matches the home line).
     if (state == null) return if (connected) "Oura connected · tap to sync" else "tap to connect Oura"
     val energy = "feeling ${energyWord(state.energyCenter)}"
-    val readiness = readinessWord(state.diagnostics.readinessScore)
+    // Recovery is an overnight metric: only show it when it's today's. A stale score (no ring last
+    // night) would otherwise read as current next to the live "synced" time.
+    val readiness = if (state.diagnostics.readinessFresh) {
+        readinessWord(state.diagnostics.readinessScore)
+    } else {
+        null
+    }
     val synced = state.syncedAt?.let { "synced ${syncedAtLabel(it)}" }
     return listOfNotNull(energy, readiness, synced).joinToString("  ·  ")
 }
