@@ -6,9 +6,9 @@
 
 **music that matches how your body feels**
 
-A biometric-aware, fully on-device music player. Originally built for the [iKKO MindOne](https://ikko.com/), it
+A mobile app that plays music based on the vibes of your fitness data. Originally built for the [iKKO MindOne](https://ikko.com/), it
 runs on any Android phone paired with an Oura Ring.
-It reads your body's metrics, understands the *feel* of your own
+It reads your biometrics, understands the *feel* of your own
 music library, and plays what fits — all wrapped in a full-screen, nostalgic Winamp visualizer.
 
 </div>
