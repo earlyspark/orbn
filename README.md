@@ -31,9 +31,18 @@ Under the hood, orbn analyzes each song once (tempo, key, energy, mood, genre) a
 simple *valence–energy* space. Your biometric state becomes a target point in that same space, and
 orbn plays the tracks that fit — then renders them as living, reactive visuals you can just stare at.
 
-**No Oura Ring, or don't want to connect one?** orbn still works. Pick a **mood** (happy, chill, sad,
-excited, angry — or just "default") and it matches songs to that feel instead of your biometrics. Either way it only ever plays the local music
-you've added to the device.
+**No Oura Ring, or don't want to connect one?** orbn still works. Pick a **mood** and it matches songs
+to that feel instead of your biometrics. Either way it only ever plays the local music you've added to
+the device.
+
+The moods:
+
+- **Default** — no override; follow your Oura state (or a neutral feel if there's no ring).
+- **Happy** — bright, upbeat.
+- **Excited** — fast, high-energy — any feeling.
+- **Chill** — mellow, and **instrumental only** (no lyrics) — made for focus and background listening.
+- **Sad** — slower, downbeat.
+- **Angry** — dark, intense, high-energy.
 
 ## The story
 
@@ -130,10 +139,11 @@ Either way, **orbn copies the files into its own folder** — your originals are
 modified. Because they live inside the app, **uninstalling orbn deletes its copies** (re-importing is
 quick). Supported: `mp3`, `flac`, `m4a`, `aac`, `ogg`, `wav`.
 
-**How analysis works:** when you add music, orbn analyzes each track in the background — tempo, key,
-energy, mood, and genre — entirely on-device (nothing is uploaded). The home screen shows the progress
+**How analysis works:** when you add music, orbn analyzes each track on-device — tempo, key, energy,
+mood, and genre — and nothing is uploaded. The home screen and a notification show the progress
 (`tagging your library… 3 / 12`), and a track becomes available to play once it's been analyzed. It's
-roughly a few seconds per track and resumes automatically if interrupted.
+CPU-heavy work — on the order of tens of seconds per track — so a large library tags itself in the
+background over time (even while you listen), and it resumes automatically if interrupted.
 
 ### Connecting Oura
 
