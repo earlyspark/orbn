@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.text.TextUtils
 import android.graphics.drawable.GradientDrawable
@@ -135,6 +136,12 @@ class VisualizerActivity : ComponentActivity() {
             setEGLContextClientVersion(3)
             setRenderer(renderer)
             renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+            // Claim the surface back from Android's system back-swipe so viz swipes
+            // (mood/why/rematch) aren't read as a system gesture. Re-applied on layout
+            // so the rect tracks the view's size; the OS still caps it at 200dp/edge.
+            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                v.systemGestureExclusionRects = listOf(Rect(0, 0, v.width, v.height))
+            }
             setOnTouchListener { v, ev ->
                 when (ev.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {

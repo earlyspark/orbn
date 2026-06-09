@@ -23,6 +23,7 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -621,6 +622,11 @@ fun OrbnHome(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // Claim this surface back from Android's system gestures so edge/diagonal
+            // swipes drive orbn (mood/history/why/rematch) instead of triggering the
+            // system back-swipe. The platform caps back exclusion at 200dp/edge and
+            // keeps the bottom home-swipe reserved, so this curbs — not eliminates — it.
+            .systemGestureExclusion()
             .background(OrbnBg)
             .pointerInput(Unit) {
                 detectTapGestures(onTap = { onTap() }, onLongPress = { onLongPress() })
