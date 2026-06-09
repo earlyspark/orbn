@@ -60,11 +60,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.earlyspark.orbn.library.LibraryRepository
-import com.earlyspark.orbn.library.TaggingWorker
+import com.earlyspark.orbn.library.TaggingService
 import com.earlyspark.orbn.match.FeedbackBias
 import com.earlyspark.orbn.match.Matcher
 import com.earlyspark.orbn.match.Mood
@@ -477,14 +475,14 @@ class MainActivity : ComponentActivity() {
         return f
     }
 
-    /** Reconcile the folder with the DB, then enqueue the (resumable) tagging job. */
+    /** Reconcile the folder with the DB, then start the (resumable) tagging service. */
     private fun rescanAndTag() {
         lifecycleScope.launch {
             repository.scan()
-            val request = OneTimeWorkRequestBuilder<TaggingWorker>().build()
-            // KEEP: if a tagging run is already queued/running, don't duplicate it.
-            WorkManager.getInstance(applicationContext)
-                .enqueueUniqueWork(TaggingWorker.UNIQUE_NAME, ExistingWorkPolicy.KEEP, request)
+            // Retire any leftover WorkManager tagger from a prior version (its backoff
+            // could otherwise keep a stale, stalled job parked in the scheduler).
+            WorkManager.getInstance(applicationContext).cancelUniqueWork(TaggingService.LEGACY_WORK_NAME)
+            TaggingService.start(applicationContext)
         }
     }
 

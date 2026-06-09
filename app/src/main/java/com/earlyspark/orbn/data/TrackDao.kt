@@ -28,6 +28,10 @@ interface TrackDao {
     @Query("SELECT COUNT(*) FROM tracks")
     fun totalCount(): Flow<Int>
 
+    /** One-shot total count, for background progress reporting. */
+    @Query("SELECT COUNT(*) FROM tracks")
+    suspend fun totalCountOnce(): Int
+
     /** Live count of files that have been analyzed. */
     @Query("SELECT COUNT(*) FROM tracks WHERE analyzedAt IS NOT NULL")
     fun analyzedCount(): Flow<Int>

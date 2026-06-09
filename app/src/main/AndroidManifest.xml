@@ -7,6 +7,8 @@
     <!-- Foreground media playback (background audio + lock-screen controls). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Foreground library analysis (Doze-exempt batch tagging). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Network access for the Oura Web API (the only external service orbn talks to). -->
@@ -66,5 +68,12 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+
+        <!-- Background library analysis. Foreground (dataSync) so Doze does not defer it;
+             pauses itself while the visualizer is active or the battery is critically low. -->
+        <service
+            android:name=".library.TaggingService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
