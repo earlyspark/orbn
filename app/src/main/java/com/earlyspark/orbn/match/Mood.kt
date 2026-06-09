@@ -7,8 +7,9 @@ package com.earlyspark.orbn.match
  *
  * Design notes:
  *  - **Excited** leaves valence free, so it ranges across *any* feeling — purely high-energy/danceable.
- *  - **Chill** carries a strong [instrumentalBias], doubling as a focus/background mood (favors
- *    lyric-less tracks without excluding vocals — distinct from the hard functional gate `instrumentalMin`).
+ *  - **Chill** is a focus/background mood: it applies a hard [instrumentalMin] gate (lyric-less only —
+ *    vocals are distracting when chilling/focused) plus a soft [instrumentalBias] that still favors the
+ *    cleanest instrumentals within the gated pool.
  *  - **Sad** pins valence low but uses a wide energy band, so it spans slow-sad through mid-energy
  *    tense/stressed, while **Angry** holds the high-energy dark extreme.
  *
@@ -19,6 +20,8 @@ package com.earlyspark.orbn.match
  * @property energyBand       Half-width (Gaussian σ) of the energy zone — wider roams more.
  * @property instrumentalBias 0 = no lean; >0 softly favors lyric-less tracks (vocal tracks keep
  *                            `1 - bias` of their weight).
+ * @property instrumentalMin  Hard gate: tracks below this instrumental score are excluded entirely,
+ *                            or null for no gate. Chill uses it to drop vocals outright.
  */
 enum class Mood(
     val label: String,
@@ -27,10 +30,11 @@ enum class Mood(
     val energyCenter: Float,
     val energyBand: Float,
     val instrumentalBias: Float,
+    val instrumentalMin: Float? = null,
 ) {
     HAPPY("Happy", "Bright, upbeat.", valenceCenter = 0.85f, energyCenter = 0.60f, energyBand = 0.18f, instrumentalBias = 0f),
     EXCITED("Excited", "Fast, high-energy — any feeling.", valenceCenter = null, energyCenter = 0.88f, energyBand = 0.18f, instrumentalBias = 0f),
-    CHILL("Chill", "Mellow, mostly instrumental.", valenceCenter = 0.72f, energyCenter = 0.25f, energyBand = 0.18f, instrumentalBias = 0.7f),
+    CHILL("Chill", "Mellow, instrumental only.", valenceCenter = 0.72f, energyCenter = 0.25f, energyBand = 0.18f, instrumentalBias = 0.7f, instrumentalMin = 0.6f),
     SAD("Sad", "Slower, downbeat.", valenceCenter = 0.20f, energyCenter = 0.45f, energyBand = 0.30f, instrumentalBias = 0f),
     ANGRY("Angry", "Dark, intense, high-energy.", valenceCenter = 0.20f, energyCenter = 0.88f, energyBand = 0.18f, instrumentalBias = 0f);
 
@@ -38,7 +42,7 @@ enum class Mood(
         energyCenter = energyCenter,
         energyBand = energyBand,
         valenceCenter = valenceCenter,
-        instrumentalMin = null,
+        instrumentalMin = instrumentalMin,
         instrumentalBias = instrumentalBias,
     )
 
