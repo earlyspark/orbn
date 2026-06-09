@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.earlyspark.orbn.R
 import com.earlyspark.orbn.analysis.AudioAnalyzer
 import com.earlyspark.orbn.data.OrbnDatabase
 import kotlinx.coroutines.CoroutineScope
@@ -151,13 +152,16 @@ class TaggingService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             mgr.getNotificationChannel(CHANNEL_ID) == null
         ) {
+            // LOW is as quiet as the channel can be: Android floors a foreground-service
+            // notification to IMPORTANCE_LOW (it must stay visible), so MIN is not honored
+            // here — it still renders silently under the shade's "Silent" group.
             mgr.createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, "Library tagging", NotificationManager.IMPORTANCE_LOW)
                     .apply { description = "Background music analysis progress" }
             )
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setSmallIcon(R.drawable.ic_tagging)
             .setContentTitle("Analyzing your library")
             .setContentText(text)
             .setOngoing(true)
