@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -38,7 +39,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
@@ -96,6 +103,13 @@ import java.io.File
 import kotlin.math.abs
 
 private val OrbnBg = Color(0xFF0A0A0F)
+
+/**
+ * Side of the centered square where a tap toggles play/pause, as a fraction of screen width.
+ * Generous around the mascot but well clear of the edges, where accidental contacts
+ * (palm grazes, pocket touches, taps on a dimmed screen) overwhelmingly land.
+ */
+private const val CENTER_TAP_ZONE_FRACTION = 0.55f
 
 class MainActivity : ComponentActivity() {
 
@@ -616,8 +630,29 @@ fun OrbnHome(
     // The readout always shows your body state (feeling / readiness / synced), even when a manual
     // mood is set — the mood drives the orb + queue, but never rewrites this line.
     val bioLine = oura
-    // Only the connect prompt is tappable; the readout is informational so tap-anywhere = play/pause.
+    // Only the connect prompt is tappable; the readout is informational.
     val ouraTappable = bioLine.startsWith("tap to connect")
+
+    // Tap-to-play only fires in a generous zone around the mascot (a square,
+    // CENTER_TAP_ZONE_FRACTION of screen width, centered on the orb's measured position — the
+    // orb sits above screen center, so a screen-centered square would clip its head). Stray
+    // contacts — palm/pocket grazes, taps on a dimmed screen — land near the edges and must not
+    // toggle audio; they get a small orb wobble instead, so the screen never feels dead and the
+    // wobble points at where the button is. Long-press (visualizer) and swipes stay full-screen:
+    // a graze can't hold still for 500 ms, and none of those gestures start audio.
+    var orbCenter by remember { mutableStateOf<Offset?>(null) }
+    var missedTapTick by remember { mutableIntStateOf(0) }
+    val wobble = remember { Animatable(0f) }
+    LaunchedEffect(missedTapTick) {
+        if (missedTapTick > 0) {
+            // A few quick decaying side-to-side nudges — motion only, no brightness change
+            // (photosensitivity: nothing here flashes).
+            wobble.animateTo(1f, tween(durationMillis = 90))
+            wobble.animateTo(-0.7f, tween(durationMillis = 120))
+            wobble.animateTo(0.4f, tween(durationMillis = 110))
+            wobble.animateTo(0f, tween(durationMillis = 140, easing = FastOutSlowInEasing))
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -629,7 +664,17 @@ fun OrbnHome(
             .systemGestureExclusion()
             .background(OrbnBg)
             .pointerInput(Unit) {
-                detectTapGestures(onTap = { onTap() }, onLongPress = { onLongPress() })
+                detectTapGestures(
+                    onTap = { pos ->
+                        // The root Box fills the window at (0,0), so root coords == tap coords.
+                        val center = orbCenter ?: Offset(size.width / 2f, size.height / 2f)
+                        val half = size.width * CENTER_TAP_ZONE_FRACTION / 2f
+                        val inZone = abs(pos.x - center.x) <= half &&
+                            abs(pos.y - center.y) <= half
+                        if (inZone) onTap() else missedTapTick++
+                    },
+                    onLongPress = { onLongPress() },
+                )
             }
             .pointerInput(Unit) {
                 var dx = 0f
@@ -666,7 +711,10 @@ fun OrbnHome(
                 playing = playing,
                 burstTick = burstTick,
                 nudgeTick = nudgeTick,
-                modifier = Modifier.size(150.dp),
+                modifier = Modifier
+                    .offset(x = (wobble.value * 6).dp)
+                    .size(150.dp)
+                    .onGloballyPositioned { orbCenter = it.boundsInRoot().center },
             )
             // CTA where the "orbn" title used to be — tucked close under the orb. Height is reserved
             // so the lines below don't jump when it shows (paused / tap to play) or hides (playing).
