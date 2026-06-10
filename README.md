@@ -29,7 +29,7 @@ orbn is different on three counts:
 
 Under the hood, orbn analyzes each song once (tempo, key, energy, mood, genre) and places it in a
 simple *valence–energy* space. Your biometric state becomes a target point in that same space, and
-orbn plays the tracks that fit — then renders them as living, reactive visuals you can just stare at.
+orbn plays the tracks that fit — then renders them with visuals you can just stare at.
 
 **No Oura Ring, or don't want to connect one?** orbn still works. Pick a **mood** and it matches songs
 to that feel instead of your biometrics. Either way it only ever plays the local music you've added to
