@@ -145,10 +145,9 @@ background over time (even while you listen), and it resumes automatically if in
 
 ### Connecting Oura
 
-To use the biometric features you supply your **own** Oura developer app credentials — orbn ships
-none. Register an application at [developer.ouraring.com/applications](https://developer.ouraring.com/applications)
+To use the biometric features, you supply your own Oura developer app credentials. Register an application at [developer.ouraring.com/applications](https://developer.ouraring.com/applications)
 with the redirect URI `com.earlyspark.orbn://oauth2redirect`, then add the values to
-`local.properties` (which is gitignored and never committed):
+`local.properties` (which is gitignored and not committed):
 
 ```properties
 OURA_CLIENT_ID=your_client_id
@@ -156,7 +155,7 @@ OURA_CLIENT_SECRET=your_client_secret
 OURA_REDIRECT_URI=com.earlyspark.orbn://oauth2redirect
 ```
 
-The build injects these into `BuildConfig` at compile time; they are never hardcoded in source.
+The build injects these into `BuildConfig` at compile time; they are not hardcoded in source.
 Without them the app still builds and plays music — it just shows "Oura: add credentials" instead
 of biometric data.
 
