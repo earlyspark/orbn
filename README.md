@@ -213,9 +213,19 @@ change the visual (a library of presets you cycle through), long-press to exit. 
 iKKO's DAC when the case is attached. From here, it's refinement — polish, QA, and tuning how well
 songs match your state.
 
-## Screenshots
+## Demo & screenshots
 
 <div align="center">
+
+<a href="https://www.youtube.com/shorts/I9N_934KL6s">
+  <img src="https://img.youtube.com/vi/I9N_934KL6s/oardefault.jpg" width="230" alt="Watch the orbn demo">
+</a>
+
+**▶ [Watch the demo](https://www.youtube.com/shorts/I9N_934KL6s)**
+
+> 📝 How it was built: [*I built a mobile app with Claude Code in 4 days*](https://blog.earlyspark.com/p/i-built-a-mobile-app-with-claude)
+
+<br>
 
 <table>
 <tr>
