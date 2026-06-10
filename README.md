@@ -9,7 +9,7 @@
 A mobile app that plays music based on the vibes of your fitness data. Originally built for the [iKKO MindOne](https://ikko.com/), it
 runs on any Android phone using data from your Oura Ring.
 It reads your biometrics, understands the *feel* of your own
-music library, and plays what fits — all wrapped in a full-screen, nostalgic Winamp visualizer.
+music library, and plays what fits — with a full-screen, nostalgic Winamp visualizer.
 
 </div>
 
