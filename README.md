@@ -29,7 +29,7 @@ orbn is different on three counts:
 
 Under the hood, orbn analyzes each song once (tempo, key, energy, mood, genre) and places it in a
 simple *valence–energy* space. Your biometric state becomes a target point in that same space, and
-orbn plays the tracks that fit — then renders them with visuals you can just stare at.
+orbn plays the tracks that fit — with visuals you can just stare at.
 
 **No Oura Ring, or don't want to connect one?** orbn still works. Pick a **mood** and it matches songs
 to that feel instead of your biometrics. Either way it only ever plays the local music you've added to
@@ -65,9 +65,7 @@ If the idea of a music player that actually knows how you're doing seems neat to
 
 ## The device
 
-orbn was originally built for the iKKO MindOne: a small, near-square Android 15 device with a Cirrus Logic DAC,
-no Google services, and a focus on audio. The goal is a standalone, glanceable music player you live
-inside — with the occasional check of your Oura data.
+orbn was originally built for the iKKO MindOne: a small, near-square Android 15 device with a Cirrus Logic DAC. The goal is a standalone music player with the occasional check of your Oura data.
 
 But **it isn't MindOne-only.** orbn is written as a general Android app and **also runs on other Android
 phones** (verified on a tall, standard-aspect device) — anything device-specific (like the MindOne's
