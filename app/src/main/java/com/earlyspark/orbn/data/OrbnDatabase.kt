@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PlayEventEntity::class,
         FeedbackEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class OrbnDatabase : RoomDatabase() {
@@ -220,6 +220,20 @@ abstract class OrbnDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v11 → v12 adds daytime-stress delta bookkeeping to the daily cache (StressSignal).
+         * Additive; existing data untouched.
+         */
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `oura_daily` ADD COLUMN `stressHighSec` INTEGER")
+                db.execSQL("ALTER TABLE `oura_daily` ADD COLUMN `recoveryHighSec` INTEGER")
+                db.execSQL("ALTER TABLE `oura_daily` ADD COLUMN `stressChangedAt` INTEGER")
+                db.execSQL("ALTER TABLE `oura_daily` ADD COLUMN `stressNudge` REAL")
+                db.execSQL("ALTER TABLE `oura_daily` ADD COLUMN `stressNudgeAt` INTEGER")
+            }
+        }
+
         fun get(context: Context): OrbnDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -229,7 +243,7 @@ abstract class OrbnDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10, MIGRATION_10_11,
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
                     )
                     // Backstop only: analysis data is reproducible from the audio files, so an
                     // unforeseen schema gap can safely rebuild + re-tag rather than crash.

@@ -17,6 +17,13 @@ data class OuraDailyEntity(
     val hrvMs: Int? = null, // average overnight HRV (rmssd-based), ms
     val metLatest: Float? = null, // most recent 1-min MET (daily_activity) — intra-day movement
     val activityClass: Int? = null, // latest class_5_min: 0 non-wear..5 high activity
+    // Daytime-stress delta bookkeeping (StressSignal): the day-cumulative counters as last
+    // observed, when they last changed, and the last valid delta-derived lean + its derivation time.
+    val stressHighSec: Long? = null,
+    val recoveryHighSec: Long? = null,
+    val stressChangedAt: Long? = null,
+    val stressNudge: Float? = null,
+    val stressNudgeAt: Long? = null,
     val fetchedAt: Long,
 )
 

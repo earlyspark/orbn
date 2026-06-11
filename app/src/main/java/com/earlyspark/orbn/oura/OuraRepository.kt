@@ -29,8 +29,10 @@ import kotlin.math.roundToInt
  *    their own resting HR — not against an arbitrary fixed threshold.
  *  - **Current HR** is the latest 5-min daytime sample, or — when more recent — the heart rate
  *    from a logged session (a higher-fidelity on-demand read).
- *  - Oura's daily stress is deliberately NOT used: the API exposes only a whole-day `day_summary`
- *    (no intra-day stress), which can't track "now", so it isn't fetched or folded in at all.
+ *  - Oura's daytime stress contributes a small, decaying *delta* lean (StressSignal, amends F6):
+ *    the day-cumulative counters advance on each ring sync, so the change between observations —
+ *    when attributable to its window — leans the center intense (stress) or calm (recovery).
+ *    It is a capped secondary vote; the day-level `day_summary` label remains unused.
  *
  * v1 (M4) uses a fixed HR-span estimate for the reserve denominator. It self-calibrates from the
  * user's own logged HR distribution (D12 play-history log) once the M5 matching work lands —
@@ -75,22 +77,18 @@ class OuraRepository(
             val startDateTime = now.minusHours(HR_WINDOW_HOURS).format(ISO)
             val endDateTime = now.format(ISO)
 
-            // Debug-only probe (F6 amendment experiment): `daily_stress` counters are documented
-            // as day-cumulative, but whether they advance on each ring sync (differencable into a
-            // "recent stress" signal) or only land in the evening is undocumented. Log them on
-            // every refresh; `adb logcat -s StressProbe` over a day answers it empirically.
-            // Failures stay isolated from the real refresh (e.g. 403 = token lacks the scope).
-            if (BuildConfig.DEBUG) {
-                runCatching { api.getDailyStress(startDate, endDate) }
-                    .onSuccess { stress ->
-                        val s = stress.maxByOrNull { it.day ?: "" }
-                        Log.i(
-                            "StressProbe",
-                            "day=${s?.day} stress_high=${s?.stressHigh} " +
-                                "recovery_high=${s?.recoveryHigh} summary=${s?.daySummary}",
-                        )
-                    }
-                    .onFailure { Log.i("StressProbe", "fetch failed: $it") }
+            // Daytime-stress counters for the delta signal (StressSignal, amends F6). A supporting
+            // input only, so a failed fetch never fails the refresh — the previous state carries
+            // and its lean decays out. The probe log stays for QA (`adb logcat -s StressProbe`).
+            val stressDoc = runCatching { api.getDailyStress(startDate, endDate) }
+                .onFailure { if (BuildConfig.DEBUG) Log.i("StressProbe", "fetch failed: $it") }
+                .getOrNull()?.maxByOrNull { it.day ?: "" }
+            if (BuildConfig.DEBUG && stressDoc != null) {
+                Log.i(
+                    "StressProbe",
+                    "day=${stressDoc.day} stress_high=${stressDoc.stressHigh} " +
+                        "recovery_high=${stressDoc.recoveryHigh} summary=${stressDoc.daySummary}",
+                )
             }
 
             val readiness = api.getDailyReadiness(startDate, endDate).maxByOrNull { it.day ?: "" }
@@ -102,6 +100,25 @@ class OuraRepository(
 
             val fetchedAt = System.currentTimeMillis()
             val day = readiness?.day ?: sleep?.day ?: dailySleep?.day ?: today.toString()
+
+            // Difference the stress counters against the previous observation (cached row).
+            val prevDaily = dao.latestDaily()
+            val stressState = StressSignal.update(
+                prev = prevDaily?.let {
+                    StressSignal.State(
+                        stressHighSec = it.stressHighSec,
+                        recoveryHighSec = it.recoveryHighSec,
+                        changedAt = it.stressChangedAt,
+                        nudge = it.stressNudge,
+                        nudgeAt = it.stressNudgeAt,
+                    )
+                },
+                prevDay = prevDaily?.day,
+                day = stressDoc?.day,
+                stressHighSec = stressDoc?.stressHigh,
+                recoveryHighSec = stressDoc?.recoveryHigh,
+                now = fetchedAt,
+            )
 
             // Intra-day movement at *now*: met.items spans the whole Oura day (04:00 → 04:00 next day),
             // pre-sized to 1-min slots with trailing filler — so "last non-null" is the end-of-day
@@ -131,6 +148,11 @@ class OuraRepository(
                         hrvMs = sleep?.averageHrv,
                         metLatest = metLatest,
                         activityClass = activityClass,
+                        stressHighSec = stressState.stressHighSec,
+                        recoveryHighSec = stressState.recoveryHighSec,
+                        stressChangedAt = stressState.changedAt,
+                        stressNudge = stressState.nudge,
+                        stressNudgeAt = stressState.nudgeAt,
                         fetchedAt = fetchedAt,
                     )
                 )
@@ -233,19 +255,21 @@ class OuraRepository(
             ((it - MET_REST) / (MET_VIGOROUS - MET_REST)).coerceIn(0f, 1f) * MET_WEIGHT
         }
         val arousal = listOfNotNull(hrFrac, metFrac).maxOrNull()
+        // Daytime-stress delta lean (StressSignal, amends F6): a capped, decaying secondary vote —
+        // stress accrued since the last sync leans the center intense, recovery leans it calm
+        // (mirroring, D14). Zero whenever the signal abstains (no delta, backfill smear, stale).
+        val stressLean = StressSignal.lean(
+            daily.stressNudge, daily.stressNudgeAt, System.currentTimeMillis(),
+        )
         // Center MIRRORS current arousal (D14): calm body → calm music, no matter how recovered.
         // Resting (HR at rest, no movement) → a calm-but-awake baseline; rising HR/movement lifts it.
-        // No live signal at all → a neutral center.
+        // No live signal at all → a neutral center. The stress lean nudges either case.
         val center = if (arousal != null) {
-            (RESTING_CENTER + arousal * AROUSAL_SPAN).coerceIn(0f, 1f)
+            (RESTING_CENTER + arousal * AROUSAL_SPAN + stressLean).coerceIn(0f, 1f)
         } else {
-            0.5f
+            (0.5f + stressLean).coerceIn(0f, 1f)
         }
         val viaMovement = metFrac != null && metFrac == arousal && (hrFrac == null || metFrac > hrFrac)
-
-        // NOTE: Oura exposes no intra-day stress (only a whole-day `day_summary` — see the OpenAPI
-        // spec in docs/reference), so stress is not a signal here at all: a day-level label can't
-        // track "now" and would pin energy until midnight. HR + movement carry the live state.
 
         val syncedAt = source?.atMillis ?: daily.fetchedAt
         // Prefer the session's intra-session HRV when it's the source, else the overnight HRV.
@@ -267,6 +291,7 @@ class OuraRepository(
                 note = listOfNotNull(
                     if (source?.viaSession == true) "via session (${latestSession?.type ?: "?"})" else null,
                     if (viaMovement) "via movement (MET %.1f)".format(daily.metLatest) else null,
+                    if (stressLean != 0f) "stress lean %+.2f".format(stressLean) else null,
                 ).joinToString("; ").ifBlank { null },
             ),
         )
