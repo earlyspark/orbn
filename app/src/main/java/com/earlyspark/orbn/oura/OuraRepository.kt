@@ -1,6 +1,7 @@
 package com.earlyspark.orbn.oura
 
 import android.util.Log
+import com.earlyspark.orbn.BuildConfig
 import com.earlyspark.orbn.data.OuraDailyEntity
 import com.earlyspark.orbn.data.OuraDao
 import com.earlyspark.orbn.data.OuraHeartRateEntity
@@ -49,6 +50,13 @@ class OuraRepository(
 
     val isConnected: Boolean get() = tokenStore.isAuthorized
 
+    /**
+     * True when the stored grant covers every scope orbn now requests. False after the requested
+     * scope list changes (or for tokens saved before grants were recorded) — the caller should
+     * send the user back through consent rather than risk 403s on newly scoped endpoints.
+     */
+    val hasCurrentScopes: Boolean get() = tokenStore.coversScopes(OuraConfig.scopes)
+
     fun disconnect() = tokenStore.clear()
 
     /** Guards against overlapping auto-refreshes (app-open + song-change firing together). */
@@ -66,6 +74,24 @@ class OuraRepository(
             val now = OffsetDateTime.now()
             val startDateTime = now.minusHours(HR_WINDOW_HOURS).format(ISO)
             val endDateTime = now.format(ISO)
+
+            // Debug-only probe (F6 amendment experiment): `daily_stress` counters are documented
+            // as day-cumulative, but whether they advance on each ring sync (differencable into a
+            // "recent stress" signal) or only land in the evening is undocumented. Log them on
+            // every refresh; `adb logcat -s StressProbe` over a day answers it empirically.
+            // Failures stay isolated from the real refresh (e.g. 403 = token lacks the scope).
+            if (BuildConfig.DEBUG) {
+                runCatching { api.getDailyStress(startDate, endDate) }
+                    .onSuccess { stress ->
+                        val s = stress.maxByOrNull { it.day ?: "" }
+                        Log.i(
+                            "StressProbe",
+                            "day=${s?.day} stress_high=${s?.stressHigh} " +
+                                "recovery_high=${s?.recoveryHigh} summary=${s?.daySummary}",
+                        )
+                    }
+                    .onFailure { Log.i("StressProbe", "fetch failed: $it") }
+            }
 
             val readiness = api.getDailyReadiness(startDate, endDate).maxByOrNull { it.day ?: "" }
             val dailySleep = api.getDailySleep(startDate, endDate).maxByOrNull { it.day ?: "" }

@@ -93,6 +93,15 @@ class PlaybackService : MediaSessionService() {
             currentId = mediaItem?.mediaId
             loggedCurrent = false
             if (session?.player?.isPlaying == true) maybeLogPlayed()
+            // Keep the biometric cache fresh across track boundaries even when the UI is gone
+            // (screen off / backgrounded): MainActivity's equivalent refresh dies with its
+            // controller in onStop, but playback — and the data a re-match or play-history
+            // snapshot reads — continues out here. Staleness-gated (5 min) and deduped inside
+            // the repository, so overlap with the UI's refresh is a no-op; failures (e.g. wifi
+            // dozing with the screen off) are swallowed and retried at the next boundary.
+            scope.launch {
+                runCatching { Oura.repository(applicationContext).refreshIfStale() }
+            }
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
