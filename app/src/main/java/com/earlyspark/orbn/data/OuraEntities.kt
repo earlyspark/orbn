@@ -24,7 +24,30 @@ data class OuraDailyEntity(
     val stressChangedAt: Long? = null,
     val stressNudge: Float? = null,
     val stressNudgeAt: Long? = null,
+    // Intra-day movement series for the body timeline: 5-min mean METs as a comma-joined string
+    // anchored at [metSeriesStart] (ISO-8601), trimmed at fetch time to "now" so the trailing
+    // end-of-day filler Oura pre-sizes the day with (F16) is never stored.
+    val metSeriesStart: String? = null,
+    val metSeries: String? = null,
     val fetchedAt: Long,
+)
+
+/**
+ * Daytime-stress counter movements (StressSignal.Observation), one row per sync batch that
+ * advanced the counters. The body timeline draws stress/recovery bands from **attributable**
+ * rows only (delta plausibly within its window); smeared backfills are kept for tallies/QA but
+ * carry no positional meaning.
+ */
+@Entity(tableName = "oura_stress_obs")
+data class OuraStressObsEntity(
+    @PrimaryKey val observedAt: Long, // epoch millis of the fetch that saw the counters move
+    val day: String, // the stress document's day (YYYY-MM-DD)
+    val stressHighSec: Long, // cumulative counters as of this observation
+    val recoveryHighSec: Long,
+    val dStressSec: Long, // movement since the previous observation
+    val dRecoverySec: Long,
+    val windowStartAt: Long, // when the counters previously changed — the delta's accrual window
+    val attributable: Boolean,
 )
 
 /**

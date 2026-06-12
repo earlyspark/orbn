@@ -17,10 +17,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OuraDailyEntity::class,
         OuraHeartRateEntity::class,
         OuraSessionEntity::class,
+        OuraStressObsEntity::class,
         PlayEventEntity::class,
         FeedbackEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = false,
 )
 abstract class OrbnDatabase : RoomDatabase() {
@@ -234,6 +235,32 @@ abstract class OrbnDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v12 → v13 adds the body-timeline data: the persisted intra-day MET series on the daily
+         * cache, and the daytime-stress observation history table. Additive.
+         */
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `oura_daily` ADD COLUMN `metSeriesStart` TEXT")
+                db.execSQL("ALTER TABLE `oura_daily` ADD COLUMN `metSeries` TEXT")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `oura_stress_obs` (
+                        `observedAt` INTEGER NOT NULL,
+                        `day` TEXT NOT NULL,
+                        `stressHighSec` INTEGER NOT NULL,
+                        `recoveryHighSec` INTEGER NOT NULL,
+                        `dStressSec` INTEGER NOT NULL,
+                        `dRecoverySec` INTEGER NOT NULL,
+                        `windowStartAt` INTEGER NOT NULL,
+                        `attributable` INTEGER NOT NULL,
+                        PRIMARY KEY(`observedAt`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun get(context: Context): OrbnDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -243,7 +270,7 @@ abstract class OrbnDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13,
                     )
                     // Backstop only: analysis data is reproducible from the audio files, so an
                     // unforeseen schema gap can safely rebuild + re-tag rather than crash.

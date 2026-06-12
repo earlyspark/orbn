@@ -34,6 +34,25 @@ object StressSignal {
     )
 
     /**
+     * Result of folding one fetch: the new [state], plus an [observation] exactly when the
+     * counters moved — persisted as the delta history behind the body-timeline graph.
+     */
+    data class Outcome(val state: State, val observation: Observation? = null)
+
+    /**
+     * One counter movement: the deltas, the window they accrued over, and whether the window
+     * makes them [attributable]. Timeline bands are drawn only from attributable observations;
+     * smeared backfills are stored (QA/tallies) but never plotted as positioned time.
+     */
+    data class Observation(
+        val dStressSec: Long,
+        val dRecoverySec: Long,
+        val windowStartAt: Long,
+        val observedAt: Long,
+        val attributable: Boolean,
+    )
+
+    /**
      * Fold a freshly fetched counter pair into the previous [prev] state. [prevDay]/[day] guard
      * the rollover: counters reset each morning, so a cross-day delta is meaningless.
      */
@@ -44,19 +63,19 @@ object StressSignal {
         stressHighSec: Long?,
         recoveryHighSec: Long?,
         now: Long,
-    ): State {
+    ): Outcome {
         // No stress document (endpoint empty/failed) → keep what we had; the old lean decays out.
         if (day == null || (stressHighSec == null && recoveryHighSec == null)) {
-            return prev ?: State()
+            return Outcome(prev ?: State())
         }
         val s = stressHighSec ?: 0L
         val r = recoveryHighSec ?: 0L
         // First observation ever, or a new day's document: baseline only, nothing to difference.
         if (prev?.stressHighSec == null || prev.changedAt == null || prevDay != day) {
-            return State(stressHighSec = s, recoveryHighSec = r, changedAt = now)
+            return Outcome(State(stressHighSec = s, recoveryHighSec = r, changedAt = now))
         }
         if (s == prev.stressHighSec && r == (prev.recoveryHighSec ?: 0L)) {
-            return prev // nothing synced in — existing nudge keeps decaying
+            return Outcome(prev) // nothing synced in — existing nudge keeps decaying
         }
 
         val windowSec = (now - prev.changedAt) / 1000L
@@ -66,12 +85,21 @@ object StressSignal {
         // previous one, since whatever it described is older than this batch.
         val valid = windowSec > 0 && dStress >= 0 && dRecovery >= 0 &&
             (dStress + dRecovery) <= windowSec + BACKFILL_SLACK_SEC
-        return State(
-            stressHighSec = s,
-            recoveryHighSec = r,
-            changedAt = now,
-            nudge = if (valid) ((dStress - dRecovery).toFloat() / windowSec).coerceIn(-1f, 1f) else null,
-            nudgeAt = if (valid) now else null,
+        return Outcome(
+            state = State(
+                stressHighSec = s,
+                recoveryHighSec = r,
+                changedAt = now,
+                nudge = if (valid) ((dStress - dRecovery).toFloat() / windowSec).coerceIn(-1f, 1f) else null,
+                nudgeAt = if (valid) now else null,
+            ),
+            observation = Observation(
+                dStressSec = dStress,
+                dRecoverySec = dRecovery,
+                windowStartAt = prev.changedAt,
+                observedAt = now,
+                attributable = valid,
+            ),
         )
     }
 
