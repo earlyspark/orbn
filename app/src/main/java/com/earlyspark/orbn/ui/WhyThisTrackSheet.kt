@@ -1,10 +1,12 @@
 package com.earlyspark.orbn.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -38,7 +40,14 @@ import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +59,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.earlyspark.orbn.model.BodyTimeline
 import com.earlyspark.orbn.model.WhyThisTrack
 import kotlinx.coroutines.launch
 
@@ -64,15 +74,21 @@ private val DividerColor = Color(0xFF262A35)
  * labels, light values — Pandora/Spotify-style: title + artist stacked with thumb icons inline, the
  * "why" sentence promoted up, then the song's affect stats (Energy/Feel tappable to explain).
  * Null [info] → hidden. [onThumbsUp] reinforces; [onThumbsDown] records + skips to the next track.
+ *
+ * Second stage: another swipe up expands the sheet with the [timeline] body graph (HR + stress
+ * bands + movement); swipe down collapses to stage one, then dismisses. The expansion resets
+ * whenever the sheet reopens.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WhyThisTrackSheet(
     info: WhyThisTrack?,
+    timeline: BodyTimeline?,
     onThumbsUp: () -> Unit,
     onThumbsDown: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var expanded by remember(info) { mutableStateOf(false) }
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedVisibility(visible = info != null, enter = fadeIn(), exit = fadeOut()) {
             Box(
@@ -98,19 +114,69 @@ fun WhyThisTrackSheet(
                     .background(PanelBg)
                     // Absorb taps so they don't fall through to the scrim and close the sheet.
                     .pointerInput(Unit) { detectTapGestures { } }
-                    // Swipe down (opposite of the swipe-up that opened it) → dismiss.
-                    .pointerInput(Unit) {
+                    // Swipe up → expand to the body timeline (only when there is one — no Oura
+                    // or nothing cached today disables the stage); swipe down → collapse, dismiss.
+                    .pointerInput(expanded, timeline != null) {
                         val threshold = 100.dp.toPx()
                         var dy = 0f
                         detectVerticalDragGestures(
                             onDragStart = { dy = 0f },
                             onVerticalDrag = { change, amount -> dy += amount; change.consume() },
-                            onDragEnd = { if (dy > threshold) onDismiss() },
+                            onDragEnd = {
+                                when {
+                                    dy < -threshold && !expanded && timeline != null -> expanded = true
+                                    dy > threshold && expanded -> expanded = false
+                                    dy > threshold -> onDismiss()
+                                }
+                            },
                         )
                     }
                     .systemBarsPadding()
                     .padding(start = 24.dp, end = 16.dp, top = 20.dp, bottom = 28.dp),
             ) {
+                // Two stages in the same drawer space: stage one is the why-this-track content;
+                // a second swipe up swaps it for the body-timeline graph (the song rows slide out
+                // of view rather than stacking — one screenful at a time). The graph stage is
+                // pinned to stage one's measured height so the drawer never jumps. Swipe down
+                // steps back to stage one, then dismisses; the scrim tap dismisses either stage.
+                var stageOneHeightPx by remember(info) { mutableIntStateOf(0) }
+                AnimatedContent(
+                    targetState = expanded && timeline != null,
+                    transitionSpec = {
+                        // Match the gesture: expanding slides everything up (song view exits
+                        // out the top, graph enters from below); collapsing slides back down.
+                        if (targetState) {
+                            slideInVertically { it } togetherWith slideOutVertically { -it }
+                        } else {
+                            slideInVertically { -it } togetherWith slideOutVertically { it }
+                        }
+                    },
+                    label = "whySheetStage",
+                ) { showGraph ->
+                if (showGraph) {
+                    val pinnedHeight = with(LocalDensity.current) { stageOneHeightPx.toDp() }
+                    Column(
+                        modifier = if (stageOneHeightPx > 0) Modifier.height(pinnedHeight) else Modifier,
+                    ) {
+                        // Styled like the song title on stage one — same prominence, same place.
+                        Text(
+                            "Heart rate, movement, and stress",
+                            color = TextPrimary,
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        timeline?.let {
+                            BodyTimelineChart(
+                                timeline = it,
+                                modifier = Modifier.fillMaxWidth().weight(1f).padding(end = 8.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        BodyTimelineLegend()
+                    }
+                } else {
+                Column(modifier = Modifier.onSizeChanged { stageOneHeightPx = it.height }) {
                 // Title + artist (left) with thumb icons inline (right) — no separate row.
                 Row(verticalAlignment = Alignment.Top) {
                     Column(modifier = Modifier.weight(1f).padding(top = 6.dp, end = 8.dp)) {
@@ -192,6 +258,9 @@ fun WhyThisTrackSheet(
                                 "(happy, sad, aggressive or relaxed). “Mixed” means none stands out clearly.",
                         )
                     }
+                }
+                }
+                }
                 }
             }
         }

@@ -25,6 +25,9 @@ object OuraConfig {
      * Requested scopes — must stay a subset of what's enabled on the Oura app registration.
      * `personal` (age/sex) and `workout` are intentionally excluded: age isn't used as a matching
      * input, and workout is an event-only summary with no live signal (amends D19's grab-all).
+     * `stress` is requested to evaluate `daily_stress` as an intra-day arousal signal: its
+     * `stress_high`/`recovery_high` counters are day-cumulative, but if they update on each ring
+     * sync they can be differenced into a coarse "recent stress" read (amends F6's exclusion).
      * Changing scopes forces a re-consent, so the rest are kept even where not yet consumed.
      */
     val scopes: List<String> = listOf(
@@ -34,6 +37,7 @@ object OuraConfig {
         "tag",
         "session",
         "spo2",
+        "stress",
     )
 
     val scopeParam: String get() = scopes.joinToString(" ")

@@ -73,7 +73,9 @@ class OuraApiClient(
             .add("redirect_uri", OuraConfig.redirectUri)
             .build()
         val token = postToken(body) ?: throw OuraApiException(0, "empty token response")
-        persist(token)
+        // A code exchange immediately follows consent, so when the response omits `scope`
+        // the grant is whatever was just requested.
+        persist(token, fallbackScope = OuraConfig.scopeParam)
     }
 
     /**
@@ -107,14 +109,20 @@ class OuraApiClient(
         }
     }
 
-    private fun persist(token: TokenResponse) {
+    private fun persist(token: TokenResponse, fallbackScope: String? = null) {
         val access = token.accessToken
         val refresh = token.refreshToken
         if (access.isNullOrBlank() || refresh.isNullOrBlank()) {
             throw OuraApiException(0, "token response missing access/refresh token")
         }
         // expires_in occasionally absent → fall back to Oura's documented ~30-day lifetime.
-        tokenStore.saveTokens(access, refresh, token.expiresIn ?: DEFAULT_EXPIRES_IN)
+        // Scope: prefer the server's echo; null at refresh time keeps the recorded grant.
+        tokenStore.saveTokens(
+            access,
+            refresh,
+            token.expiresIn ?: DEFAULT_EXPIRES_IN,
+            scope = token.scope ?: fallbackScope,
+        )
     }
 
     // --- Endpoints --------------------------------------------------------------------------
@@ -133,6 +141,9 @@ class OuraApiClient(
 
     fun getDailyActivity(startDate: String, endDate: String): List<DailyActivity> =
         getCollection("daily_activity", "start_date" to startDate, "end_date" to endDate)
+
+    fun getDailyStress(startDate: String, endDate: String): List<DailyStress> =
+        getCollection("daily_stress", "start_date" to startDate, "end_date" to endDate)
 
     fun getHeartRate(startDateTime: String, endDateTime: String): List<HeartRateSample> =
         getCollection(

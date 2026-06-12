@@ -28,4 +28,24 @@ interface OuraDao {
     /** Most recently ended session, if any. */
     @Query("SELECT * FROM oura_session ORDER BY atMillis DESC LIMIT 1")
     suspend fun latestSession(): OuraSessionEntity?
+
+    // --- Body timeline -----------------------------------------------------------------------
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStressObs(obs: OuraStressObsEntity)
+
+    /** All counter movements for one day, oldest first — band source for the body timeline. */
+    @Query("SELECT * FROM oura_stress_obs WHERE day = :day ORDER BY observedAt ASC")
+    suspend fun stressObsForDay(day: String): List<OuraStressObsEntity>
+
+    /** The daily row for one specific day (the timeline reads its persisted MET series). */
+    @Query("SELECT * FROM oura_daily WHERE day = :day")
+    suspend fun daily(day: String): OuraDailyEntity?
+
+    /**
+     * HR samples within an ISO-timestamp range, oldest first. ISO-8601 with a fixed offset sorts
+     * lexicographically within a day, which is all the timeline needs.
+     */
+    @Query("SELECT * FROM oura_heart_rate WHERE timestamp >= :fromIso AND timestamp < :toIso ORDER BY timestamp ASC")
+    suspend fun heartRateBetween(fromIso: String, toIso: String): List<OuraHeartRateEntity>
 }

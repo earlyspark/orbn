@@ -68,6 +68,20 @@ data class SleepPeriod(
     @SerialName("bedtime_end") val bedtimeEnd: String? = null,
 )
 
+/**
+ * Daily stress rollup. `stressHigh`/`recoveryHigh` are cumulative seconds for [day]; the API
+ * exposes no intra-day series, so any "recent stress" read must difference successive fetches
+ * (see the F6-amendment probe in [OuraRepository]).
+ */
+@Serializable
+data class DailyStress(
+    val id: String? = null,
+    val day: String? = null,
+    @SerialName("stress_high") val stressHigh: Long? = null,
+    @SerialName("recovery_high") val recoveryHigh: Long? = null,
+    @SerialName("day_summary") val daySummary: String? = null,
+)
+
 @Serializable
 data class HeartRateSample(
     val bpm: Int? = null,

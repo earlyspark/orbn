@@ -76,6 +76,7 @@ import com.earlyspark.orbn.match.Matcher
 import com.earlyspark.orbn.match.Mood
 import com.earlyspark.orbn.match.QueueBuilder
 import com.earlyspark.orbn.model.BiometricState
+import com.earlyspark.orbn.model.BodyTimeline
 import com.earlyspark.orbn.model.HistoryEntry
 import com.earlyspark.orbn.model.biometricReadout
 import com.earlyspark.orbn.model.energyWord
@@ -97,6 +98,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -151,6 +153,7 @@ class MainActivity : ComponentActivity() {
     private val banner = MutableStateFlow<String?>(null)
     private val showOverride = MutableStateFlow(false)
     private val whyThisTrack = MutableStateFlow<WhyThisTrack?>(null)
+    private val bodyTimeline = MutableStateFlow<BodyTimeline?>(null)
     private val showHistory = MutableStateFlow(false)
     private val historyEntries = MutableStateFlow<List<HistoryEntry>>(emptyList())
 
@@ -178,6 +181,16 @@ class MainActivity : ComponentActivity() {
         // Keep the cached library size current for onOrbTap's "no music yet" branch.
         lifecycleScope.launch { repository.totalCount.collect { libraryTotal = it } }
 
+        // Repaint the readout whenever ANY path lands fresh Oura data in the cache (e.g. the
+        // PlaybackService's track-boundary refresh) — without this, a refresh that wasn't ours
+        // finished after we painted and the line sat stale until the next manual refresh.
+        // drop(1) skips the StateFlow's initial replay (onCreate below already paints once).
+        lifecycleScope.launch {
+            Oura.repository(applicationContext).refreshCompletedAt.drop(1).collect {
+                refreshOuraStatus(forceNetwork = false) // gate is fresh → repaints from cache
+            }
+        }
+
         // M3 spike: log output-device capabilities now, and again whenever a device is
         // plugged/unplugged — so attaching the CS43198 dock prints the bit-perfect verdict live.
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
@@ -197,6 +210,7 @@ class MainActivity : ComponentActivity() {
                 val bannerMsg by banner.collectAsState(initial = null)
                 val overrideVisible by showOverride.collectAsState(initial = false)
                 val why by whyThisTrack.collectAsState(initial = null)
+                val timeline by bodyTimeline.collectAsState(initial = null)
                 val mood by manualMood.collectAsState(initial = null)
                 val historyVisible by showHistory.collectAsState(initial = false)
                 val history by historyEntries.collectAsState(initial = emptyList())
@@ -232,6 +246,7 @@ class MainActivity : ComponentActivity() {
                     )
                     WhyThisTrackSheet(
                         info = why,
+                        timeline = timeline,
                         onThumbsUp = ::thumbsUp,
                         onThumbsDown = ::thumbsDown,
                         onDismiss = { whyThisTrack.value = null },
@@ -380,7 +395,11 @@ class MainActivity : ComponentActivity() {
             showBanner("Nothing playing yet")
             return
         }
-        lifecycleScope.launch { whyThisTrack.value = queueBuilder.whyThisTrack(path, title, artist) }
+        lifecycleScope.launch {
+            whyThisTrack.value = queueBuilder.whyThisTrack(path, title, artist)
+            // Stage two of the sheet: load today's body timeline from cache (cheap, no network).
+            bodyTimeline.value = Oura.repository(applicationContext).bodyTimeline()
+        }
     }
 
     /** Swipe-right: load + show the recent-play history for retroactive feedback. */

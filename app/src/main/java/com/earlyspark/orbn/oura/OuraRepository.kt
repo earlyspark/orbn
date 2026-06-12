@@ -5,8 +5,12 @@ import com.earlyspark.orbn.data.OuraDailyEntity
 import com.earlyspark.orbn.data.OuraDao
 import com.earlyspark.orbn.data.OuraHeartRateEntity
 import com.earlyspark.orbn.data.OuraSessionEntity
+import com.earlyspark.orbn.data.OuraStressObsEntity
 import com.earlyspark.orbn.model.BiometricState
+import com.earlyspark.orbn.model.BodyTimeline
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -28,8 +32,10 @@ import kotlin.math.roundToInt
  *    their own resting HR — not against an arbitrary fixed threshold.
  *  - **Current HR** is the latest 5-min daytime sample, or — when more recent — the heart rate
  *    from a logged session (a higher-fidelity on-demand read).
- *  - Oura's daily stress is deliberately NOT used: the API exposes only a whole-day `day_summary`
- *    (no intra-day stress), which can't track "now", so it isn't fetched or folded in at all.
+ *  - Oura's daytime stress contributes a small, decaying *delta* lean (StressSignal, amends F6):
+ *    the day-cumulative counters advance on each ring sync, so the change between observations —
+ *    when attributable to its window — leans the center intense (stress) or calm (recovery).
+ *    It is a capped secondary vote; the day-level `day_summary` label remains unused.
  *
  * v1 (M4) uses a fixed HR-span estimate for the reserve denominator. It self-calibrates from the
  * user's own logged HR distribution (D12 play-history log) once the M5 matching work lands —
@@ -49,10 +55,26 @@ class OuraRepository(
 
     val isConnected: Boolean get() = tokenStore.isAuthorized
 
+    /**
+     * True when the stored grant covers every scope orbn now requests. False after the requested
+     * scope list changes (or for tokens saved before grants were recorded) — the caller should
+     * send the user back through consent rather than risk 403s on newly scoped endpoints.
+     */
+    val hasCurrentScopes: Boolean get() = tokenStore.coversScopes(OuraConfig.scopes)
+
     fun disconnect() = tokenStore.clear()
 
     /** Guards against overlapping auto-refreshes (app-open + song-change firing together). */
     private val refreshing = AtomicBoolean(false)
+
+    /**
+     * Ticks (the fetch's epoch millis) whenever a refresh lands new data in the cache. UI layers
+     * collect this and repaint from cache, so the readout stays current no matter which path ran
+     * the fetch — without it, the home line went stale when PlaybackService's track-boundary
+     * refresh won the dedupe race and finished after the activity had already painted.
+     */
+    private val _refreshCompletedAt = MutableStateFlow(0L)
+    val refreshCompletedAt: StateFlow<Long> = _refreshCompletedAt
 
     /** Pull the latest Oura data, cache it, and compute the current target. */
     suspend fun refresh(): RefreshResult = withContext(Dispatchers.IO) {
@@ -67,15 +89,64 @@ class OuraRepository(
             val startDateTime = now.minusHours(HR_WINDOW_HOURS).format(ISO)
             val endDateTime = now.format(ISO)
 
+            // Daytime-stress counters for the delta signal (StressSignal, amends F6). A supporting
+            // input only, so a failed fetch never fails the refresh — the previous state carries
+            // and its lean decays out. (Counter history is QA-inspectable via `oura_stress_obs`.)
+            val stressDoc = runCatching { api.getDailyStress(startDate, endDate) }
+                .onFailure { Log.w(TAG, "daily_stress fetch failed (isolated): $it") }
+                .getOrNull()?.maxByOrNull { it.day ?: "" }
+
             val readiness = api.getDailyReadiness(startDate, endDate).maxByOrNull { it.day ?: "" }
             val dailySleep = api.getDailySleep(startDate, endDate).maxByOrNull { it.day ?: "" }
             val sleep = api.getSleepPeriods(startDate, endDate).maxByOrNull { it.day ?: "" }
             val heartRates = api.getHeartRate(startDateTime, endDateTime)
             val sessions = api.getSessions(startDate, endDate)
-            val activity = api.getDailyActivity(startDate, endDate).maxByOrNull { it.day ?: "" }
+            // The current *Oura* day (their day runs 04:00 → 04:00): between local midnight and
+            // 4 AM the API already serves tomorrow's daily_activity document (met anchored at a
+            // future 4 AM, items empty), so a naive max-by-day picks an empty doc and the
+            // elapsed-time index goes negative. Select the doc for the Oura day instead.
+            val ouraDay = (if (now.hour < 4) today.minusDays(1) else today).toString()
+            val activity = api.getDailyActivity(startDate, endDate)
+                .filter { it.day != null && it.day!! <= ouraDay }
+                .maxByOrNull { it.day ?: "" }
 
             val fetchedAt = System.currentTimeMillis()
             val day = readiness?.day ?: sleep?.day ?: dailySleep?.day ?: today.toString()
+
+            // Difference the stress counters against the previous observation (cached row).
+            val prevDaily = dao.latestDaily()
+            val stressOutcome = StressSignal.update(
+                prev = prevDaily?.let {
+                    StressSignal.State(
+                        stressHighSec = it.stressHighSec,
+                        recoveryHighSec = it.recoveryHighSec,
+                        changedAt = it.stressChangedAt,
+                        nudge = it.stressNudge,
+                        nudgeAt = it.stressNudgeAt,
+                    )
+                },
+                prevDay = prevDaily?.day,
+                day = stressDoc?.day,
+                stressHighSec = stressDoc?.stressHigh,
+                recoveryHighSec = stressDoc?.recoveryHigh,
+                now = fetchedAt,
+            )
+            val stressState = stressOutcome.state
+            // Record every counter movement — the delta history behind the body-timeline bands.
+            stressOutcome.observation?.let { o ->
+                dao.insertStressObs(
+                    OuraStressObsEntity(
+                        observedAt = o.observedAt,
+                        day = stressDoc?.day ?: today.toString(),
+                        stressHighSec = stressState.stressHighSec ?: 0L,
+                        recoveryHighSec = stressState.recoveryHighSec ?: 0L,
+                        dStressSec = o.dStressSec,
+                        dRecoverySec = o.dRecoverySec,
+                        windowStartAt = o.windowStartAt,
+                        attributable = o.attributable,
+                    )
+                )
+            }
 
             // Intra-day movement at *now*: met.items spans the whole Oura day (04:00 → 04:00 next day),
             // pre-sized to 1-min slots with trailing filler — so "last non-null" is the end-of-day
@@ -95,6 +166,20 @@ class OuraRepository(
                 classes.getOrNull(idx5)?.takeIf { it.isDigit() }?.digitToIntOrNull()
             }
 
+            // Body timeline: persist the day-so-far MET series, downsampled 1-min → 5-min means.
+            // Trim at "now" (same elapsed-index logic as metLatest) so the pre-sized trailing
+            // filler (F16) never lands in the cache; "-" marks an empty bucket (all-null minutes).
+            val metSeriesCsv = metSeries?.items?.let { items ->
+                val upTo = elapsedMin?.let { (it + 1).coerceIn(0, items.size) } ?: items.size
+                items.take(upTo).chunked(5) { chunk ->
+                    val real = chunk.filterNotNull()
+                    if (real.isEmpty()) "-" else "%.2f".format(real.average())
+                }.joinToString(",")
+            }
+            // Never clobber a stored series with emptiness (a thin/odd API response must not
+            // destroy the day's accumulated movement history — bitten live at 01:03 on 06-11).
+            val keepPrevSeries = metSeriesCsv.isNullOrBlank() && prevDaily?.day == day
+
             dao.upsertDaily(
                 listOf(
                     OuraDailyEntity(
@@ -105,6 +190,13 @@ class OuraRepository(
                         hrvMs = sleep?.averageHrv,
                         metLatest = metLatest,
                         activityClass = activityClass,
+                        stressHighSec = stressState.stressHighSec,
+                        recoveryHighSec = stressState.recoveryHighSec,
+                        stressChangedAt = stressState.changedAt,
+                        stressNudge = stressState.nudge,
+                        stressNudgeAt = stressState.nudgeAt,
+                        metSeriesStart = if (keepPrevSeries) prevDaily?.metSeriesStart else metSeries?.timestamp,
+                        metSeries = if (keepPrevSeries) prevDaily?.metSeries else metSeriesCsv,
                         fetchedAt = fetchedAt,
                     )
                 )
@@ -122,6 +214,7 @@ class OuraRepository(
             if (sessionEntities.isNotEmpty()) dao.upsertSessions(sessionEntities)
 
             val state = currentState() ?: BiometricState.neutral()
+            _refreshCompletedAt.value = fetchedAt // cache updated → tell UI collectors to repaint
             RefreshResult.Success(state)
         } catch (e: OuraAuthException) {
             RefreshResult.NotConnected
@@ -161,6 +254,48 @@ class OuraRepository(
         val latestHr = dao.latestHeartRate()
         val latestSession = dao.latestSession()
         fold(daily, latestHr, latestSession)
+    }
+
+    /**
+     * Assemble today's [BodyTimeline] purely from the local cache (no network): HR samples since
+     * local midnight, the persisted 5-min MET series, and stress/recovery bands placed from the
+     * attributable delta history. Null when there is nothing at all to draw.
+     */
+    suspend fun bodyTimeline(): BodyTimeline? = withContext(Dispatchers.IO) {
+        // The window runs on Oura's day (04:00 → 04:00 next day): the MET series is anchored at
+        // 4 AM, so a midnight-anchored window left the movement lane starting 4 h into the plot.
+        // Before 4 AM the current Oura day is still yesterday's.
+        val zone = java.time.ZoneId.systemDefault()
+        val nowDt = java.time.LocalDateTime.now()
+        val today = if (nowDt.hour < 4) LocalDate.now().minusDays(1) else LocalDate.now()
+        val startMillis = today.atTime(4, 0).atZone(zone).toInstant().toEpochMilli()
+        val nowMillis = System.currentTimeMillis()
+
+        // HR timestamps are stored as the API sent them (UTC ISO), so query in UTC strings —
+        // lexicographic range works within a consistent format.
+        val utc = java.time.ZoneOffset.UTC
+        val utcFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+        val fromIso = java.time.Instant.ofEpochMilli(startMillis).atZone(utc).format(utcFmt)
+        val toIso = java.time.Instant.ofEpochMilli(nowMillis).atZone(utc).format(utcFmt)
+        val hr = dao.heartRateBetween(fromIso, toIso).mapNotNull { sample ->
+            parseIsoMillis(sample.timestamp)?.let { BodyTimeline.HrPoint(it, sample.bpm) }
+        }
+
+        val daily = dao.daily(today.toString())
+        val metStart = parseIsoMillis(daily?.metSeriesStart)
+        val met = if (metStart != null && !daily?.metSeries.isNullOrBlank()) {
+            daily!!.metSeries!!.split(',').mapIndexedNotNull { i, v ->
+                v.toFloatOrNull()?.let { BodyTimeline.MetPoint(metStart + i * 5 * 60_000L, it) }
+            }
+        } else emptyList()
+
+        val bands = dao.stressObsForDay(today.toString())
+            .filter { it.attributable }
+            .flatMap { BodyTimeline.placeBands(it.dStressSec, it.dRecoverySec, it.observedAt) }
+            .filter { it.endMillis > startMillis }
+
+        val timeline = BodyTimeline(startMillis, nowMillis, hr, met, bands)
+        if (timeline.isEmpty) null else timeline
     }
 
     // --- Folding logic (pure, per-person) ---------------------------------------------------
@@ -207,19 +342,21 @@ class OuraRepository(
             ((it - MET_REST) / (MET_VIGOROUS - MET_REST)).coerceIn(0f, 1f) * MET_WEIGHT
         }
         val arousal = listOfNotNull(hrFrac, metFrac).maxOrNull()
+        // Daytime-stress delta lean (StressSignal, amends F6): a capped, decaying secondary vote —
+        // stress accrued since the last sync leans the center intense, recovery leans it calm
+        // (mirroring, D14). Zero whenever the signal abstains (no delta, backfill smear, stale).
+        val stressLean = StressSignal.lean(
+            daily.stressNudge, daily.stressNudgeAt, System.currentTimeMillis(),
+        )
         // Center MIRRORS current arousal (D14): calm body → calm music, no matter how recovered.
         // Resting (HR at rest, no movement) → a calm-but-awake baseline; rising HR/movement lifts it.
-        // No live signal at all → a neutral center.
+        // No live signal at all → a neutral center. The stress lean nudges either case.
         val center = if (arousal != null) {
-            (RESTING_CENTER + arousal * AROUSAL_SPAN).coerceIn(0f, 1f)
+            (RESTING_CENTER + arousal * AROUSAL_SPAN + stressLean).coerceIn(0f, 1f)
         } else {
-            0.5f
+            (0.5f + stressLean).coerceIn(0f, 1f)
         }
         val viaMovement = metFrac != null && metFrac == arousal && (hrFrac == null || metFrac > hrFrac)
-
-        // NOTE: Oura exposes no intra-day stress (only a whole-day `day_summary` — see the OpenAPI
-        // spec in docs/reference), so stress is not a signal here at all: a day-level label can't
-        // track "now" and would pin energy until midnight. HR + movement carry the live state.
 
         val syncedAt = source?.atMillis ?: daily.fetchedAt
         // Prefer the session's intra-session HRV when it's the source, else the overnight HRV.
@@ -241,6 +378,7 @@ class OuraRepository(
                 note = listOfNotNull(
                     if (source?.viaSession == true) "via session (${latestSession?.type ?: "?"})" else null,
                     if (viaMovement) "via movement (MET %.1f)".format(daily.metLatest) else null,
+                    if (stressLean != 0f) "stress lean %+.2f".format(stressLean) else null,
                 ).joinToString("; ").ifBlank { null },
             ),
         )

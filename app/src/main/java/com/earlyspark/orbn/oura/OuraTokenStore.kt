@@ -40,6 +40,18 @@ class OuraTokenStore(context: Context) {
 
     val isAuthorized: Boolean get() = !accessToken.isNullOrBlank() && !refreshToken.isNullOrBlank()
 
+    /** Space-separated scope string the stored tokens were granted with (null for legacy tokens). */
+    val grantedScope: String? get() = prefs.getString(KEY_SCOPE, null)
+
+    /**
+     * True when the stored grant covers every scope in [required]. Legacy tokens persisted before
+     * scopes were recorded report false, which correctly forces one re-consent.
+     */
+    fun coversScopes(required: Collection<String>): Boolean {
+        val granted = grantedScope?.split(' ')?.filter { it.isNotBlank() }?.toSet() ?: return false
+        return granted.containsAll(required)
+    }
+
     /**
      * True when the access token is missing or within [SKEW_MILLIS] of expiry, i.e. a refresh
      * should happen before the next call.
@@ -49,12 +61,17 @@ class OuraTokenStore(context: Context) {
         return now >= (expiresAtMillis - SKEW_MILLIS)
     }
 
-    /** Store a freshly issued token set. [expiresInSeconds] is from the token response. */
-    fun saveTokens(accessToken: String, refreshToken: String, expiresInSeconds: Long) {
+    /**
+     * Store a freshly issued token set. [expiresInSeconds] is from the token response.
+     * [scope] is the granted scope string; null (e.g. a refresh response omitting it) keeps
+     * the previously recorded grant.
+     */
+    fun saveTokens(accessToken: String, refreshToken: String, expiresInSeconds: Long, scope: String?) {
         prefs.edit()
             .putString(KEY_ACCESS, accessToken)
             .putString(KEY_REFRESH, refreshToken)
             .putLong(KEY_EXPIRES_AT, System.currentTimeMillis() + expiresInSeconds * 1000L)
+            .apply { if (scope != null) putString(KEY_SCOPE, scope) }
             .commit() // synchronous: never lose the rotated refresh token
     }
 
@@ -64,6 +81,7 @@ class OuraTokenStore(context: Context) {
             .remove(KEY_ACCESS)
             .remove(KEY_REFRESH)
             .remove(KEY_EXPIRES_AT)
+            .remove(KEY_SCOPE)
             .commit()
     }
 
@@ -86,6 +104,7 @@ class OuraTokenStore(context: Context) {
         const val KEY_ACCESS = "access_token"
         const val KEY_REFRESH = "refresh_token"
         const val KEY_EXPIRES_AT = "expires_at"
+        const val KEY_SCOPE = "granted_scope"
         const val KEY_AUTH_STATE = "auth_state"
 
         /** Refresh this long before the real expiry to avoid racing a 401. */

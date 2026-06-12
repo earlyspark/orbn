@@ -38,6 +38,7 @@ import androidx.media3.session.SessionToken
 import com.earlyspark.orbn.library.AnalysisGate
 import com.earlyspark.orbn.match.Mood
 import com.earlyspark.orbn.match.QueueBuilder
+import com.earlyspark.orbn.model.BodyTimeline
 import com.earlyspark.orbn.model.HistoryEntry
 import com.earlyspark.orbn.model.WhyThisTrack
 import com.earlyspark.orbn.model.biometricReadout
@@ -53,6 +54,7 @@ import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -95,6 +97,7 @@ class VisualizerActivity : ComponentActivity() {
     // Compose overlay state (the home sheets reused over the GL surface).
     private val showOverride = MutableStateFlow(false)
     private val whyThisTrack = MutableStateFlow<WhyThisTrack?>(null)
+    private val bodyTimeline = MutableStateFlow<BodyTimeline?>(null)
     private val showHistory = MutableStateFlow(false)
     private val historyEntries = MutableStateFlow<List<HistoryEntry>>(emptyList())
     private val banner = MutableStateFlow<String?>(null)
@@ -398,6 +401,14 @@ class VisualizerActivity : ComponentActivity() {
                 updateStatusOverlay(it.isPlaying)
             }
         }, MoreExecutors.directExecutor())
+        // Repaint the paused overlay's readout whenever any path lands fresh Oura data in the
+        // cache (parity with home — the overlay otherwise shows a stale line until the next
+        // play/pause event). drop(1) skips the StateFlow's initial replay.
+        lifecycleScope.launch {
+            Oura.repository(applicationContext).refreshCompletedAt.drop(1).collect {
+                updateStatusOverlay(controller?.isPlaying == true)
+            }
+        }
     }
 
     private fun togglePlayPause() {
@@ -433,8 +444,10 @@ class VisualizerActivity : ComponentActivity() {
                 onApply = ::pickMood,
                 onDismiss = { showOverride.value = false },
             )
+            val timeline by bodyTimeline.collectAsState()
             WhyThisTrackSheet(
                 info = why,
+                timeline = timeline,
                 onThumbsUp = ::thumbsUp,
                 onThumbsDown = ::thumbsDown,
                 onDismiss = { whyThisTrack.value = null },
@@ -469,7 +482,11 @@ class VisualizerActivity : ComponentActivity() {
         val path = c.currentMediaItem?.mediaId ?: run { showBanner("Nothing playing yet"); return }
         val title = c.currentMediaItem?.mediaMetadata?.title?.toString() ?: "This track"
         val artist = c.currentMediaItem?.mediaMetadata?.artist?.toString()
-        lifecycleScope.launch { whyThisTrack.value = queueBuilder.whyThisTrack(path, title, artist) }
+        lifecycleScope.launch {
+            whyThisTrack.value = queueBuilder.whyThisTrack(path, title, artist)
+            // Stage two of the sheet: today's body timeline from cache (cheap, no network).
+            bodyTimeline.value = Oura.repository(applicationContext).bodyTimeline()
+        }
     }
 
     /** Swipe-down rematch (parity with home): biometric if Oura's on, else mood, else random. */
