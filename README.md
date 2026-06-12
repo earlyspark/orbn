@@ -22,7 +22,9 @@ orbn is different on three counts:
 
 - **It plays *your* music** — the local files you own, not a streaming service.
 - **It understands how you are** — using your Oura Ring's overnight recovery/HRV as a daily
-  baseline, nudged by your heart rate and movement through the day.
+  baseline, nudged by your heart rate, movement, **and daytime stress** through the day. (The
+  stress signal is recovered from Oura's daily counters between ring syncs — most players never
+  see it at all.)
 - **It runs entirely on the device** — analysis, matching, and visuals all happen locally on your
   phone. orbn has no backend and no account of its own; the only thing it ever fetches is your own
   readings from Oura's API, and nothing about your music or listening leaves the device.
@@ -76,7 +78,7 @@ DAC tuning) degrades gracefully. Any Android + Oura Ring user can run it, not ju
 ```
 your music files ──► on-device analysis (tempo / key / energy / mood / genre)
                                    │
-Oura Ring ──► daily recovery + intra-day heart rate & movement ──► "how you are" right now
+Oura Ring ──► daily recovery + intra-day heart rate, movement & stress ──► "how you are" right now
                                    │
                      match in a valence–energy space
                                    │
@@ -146,8 +148,11 @@ background over time (even while you listen), and it resumes automatically if in
 ### Connecting Oura
 
 To use the biometric features, you supply your own Oura developer app credentials. Register an application at [developer.ouraring.com/applications](https://developer.ouraring.com/applications)
-with the redirect URI `com.earlyspark.orbn://oauth2redirect`, then add the values to
-`local.properties` (which is gitignored and not committed):
+with the redirect URI `com.earlyspark.orbn://oauth2redirect`. When the registration form asks
+which **scopes** to enable, include at least the ones orbn requests — `email`, `daily`,
+`heartrate`, `tag`, `session`, `spo2`, and `stress` (authorization fails if the app requests a
+scope your registration doesn't enable). Then add the values to `local.properties` (which is
+gitignored and not committed):
 
 ```properties
 OURA_CLIENT_ID=your_client_id
@@ -159,10 +164,10 @@ The build injects these into `BuildConfig` at compile time; they are not hardcod
 Without them the app still builds and plays music — it just shows "Oura: add credentials" instead
 of biometric data.
 
-Once connected, orbn reads your data on app-open and at each track change (and on demand), showing
-the time of the freshest reading. For this to stay current, **turn on background sync in the Oura
-app** — your ring only reaches Oura's cloud through that app, so with background sync off orbn can
-only see data from the last time you manually opened Oura.
+Once connected, orbn reads your data on app-open and at each track change — including while the
+screen is off — and shows the time of the freshest reading. For this to stay current, **turn on
+background sync in the Oura app** — your ring only reaches Oura's cloud through that app, so with
+background sync off orbn can only see data from the last time you manually opened Oura.
 
 ## Visualizer presets
 
@@ -194,21 +199,27 @@ one, delete its `.milk` file from `app/src/main/assets/presets/` and rebuild.
 
 On-device music analysis → background tagging of your library → playback → Oura integration →
 biometric matching → the full-screen reactive visualizer → a manual mood picker ✅ **— v1, done**
-— → **refinement & bug-fixing (next)** → more.
+— → intra-day **stress** as a matching signal + a **body timeline** view ✅ —
+→ **refinement & tuning (ongoing)** → more.
 
 ## Status
 
-✅ **v1 is feature-complete: the full loop works end to end — it reads your body, plays music to match,
-and visualizes it.** On real hardware, orbn scans and analyzes your library entirely on-device (tempo,
-key, energy, mood, genre), connects to your Oura Ring to read your recovery, heart rate, and movement
-into a "how you are right now" signal, and **builds a play queue that fits that signal** — sampled
-for variety, ordered to flow, and mindful of what you've recently played so it doesn't repeat. Pull
-down to re-tune the queue to right now, or **swipe to set a mood** (happy, chill, sad, excited…) when
-you want to override what your body says and pick the feel yourself. Now-playing is a **full-screen
-MilkDrop-style visualizer (projectM) that reacts to the live audio** — tap to play/pause, double-tap to
-change the visual (a library of presets you cycle through), long-press to exit. Plays back hi-res to the
-iKKO's DAC when the case is attached. From here, it's refinement — polish, QA, and tuning how well
-songs match your state.
+✅ **v1 is feature-complete, and the matching engine now hears stress: the full loop works end to
+end — it reads your body, plays music to match, and visualizes it.** On real hardware, orbn scans
+and analyzes your library entirely on-device (tempo, key, energy, mood, genre), connects to your
+Oura Ring to read your recovery, heart rate, movement, **and daytime stress** into a "how you are
+right now" signal, and **builds a play queue that fits that signal** — sampled for variety, ordered
+to flow, and mindful of what you've recently played so it doesn't repeat. Stress is the newest
+ingredient: orbn recovers it between ring syncs from Oura's daily counters, so recent tension leans
+the music more intense and recovery leans it calmer (orbn *mirrors* you, it doesn't manage you).
+Pull down to re-tune the queue to right now, or **swipe to set a mood** (happy, chill, sad,
+excited…) when you want to override what your body says and pick the feel yourself. Swipe up on a
+playing track to see **why it was picked** — and swipe up again for a **day graph of your body**:
+heart rate, movement, and stress, drawn from the same data the matcher uses. Now-playing is a
+**full-screen MilkDrop-style visualizer (projectM) that reacts to the live audio** — tap to
+play/pause, double-tap to change the visual (a library of presets you cycle through), long-press to
+exit. Plays back hi-res to the iKKO's DAC when the case is attached. From here, it's refinement —
+polish, QA, and tuning how well songs match your state.
 
 ## Demo & screenshots
 
