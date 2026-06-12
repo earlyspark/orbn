@@ -15,13 +15,16 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.earlyspark.orbn.data.OrbnDatabase
 import com.earlyspark.orbn.data.PlayEventEntity
+import com.earlyspark.orbn.match.QueueBuilder
 import com.earlyspark.orbn.oura.Oura
 import com.earlyspark.orbn.visualizer.AudioTap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
@@ -138,6 +141,20 @@ class PlaybackService : MediaSessionService() {
 
         player.addListener(logListener)
         session = MediaSession.Builder(this, player).build()
+
+        // Auto-re-steer (SPEC §6): whenever a refresh lands fresh Oura data, check whether the
+        // live target has drifted past the threshold from what the current queue was built for —
+        // if so, silently rebuild the UPCOMING tracks (the playing one is never touched). Lives
+        // here, not in the UI, so the queue follows the body during screen-off listening too.
+        // Player access must happen on the main thread.
+        scope.launch {
+            Oura.repository(applicationContext).refreshCompletedAt.drop(1).collect {
+                withContext(Dispatchers.Main) {
+                    val p = session?.player ?: return@withContext
+                    runCatching { QueueBuilder(this@PlaybackService).reSteerIfDrifted(p) }
+                }
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session

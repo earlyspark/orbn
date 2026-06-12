@@ -190,6 +190,11 @@ class MainActivity : ComponentActivity() {
                 refreshOuraStatus(forceNetwork = false) // gate is fresh → repaints from cache
             }
         }
+        // An auto-re-steer (the service silently re-tuned the upcoming queue to a drifted target)
+        // gets the same mascot burst as a manual re-pick — the visible hint that the queue changed.
+        lifecycleScope.launch {
+            QueueBuilder.reSteeredAt.drop(1).collect { triggerBurst() }
+        }
 
         // M3 spike: log output-device capabilities now, and again whenever a device is
         // plugged/unplugged — so attaching the CS43198 dock prints the bit-perfect verdict live.

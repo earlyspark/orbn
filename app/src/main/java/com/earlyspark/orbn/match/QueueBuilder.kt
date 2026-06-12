@@ -62,6 +62,9 @@ class QueueBuilder(private val context: Context) {
         if (candidates.isEmpty()) return folderItems() // nothing analyzed yet → keep playback working
 
         val target = currentTarget()
+        // Remember what the queue was built FOR (persisted — instances are throwaway), so any
+        // later holder of the player can measure how far the live target has drifted from it.
+        uiPrefs.edit().putFloat(KEY_BUILT_ENERGY, target.energyCenter).apply()
         val now = System.currentTimeMillis()
         val lastPlayed = db.playEventDao().lastPlayedSince(now - RECENCY_WINDOW_MS)
             .associate { it.trackPath to it.lastPlayed }
@@ -116,7 +119,43 @@ class QueueBuilder(private val context: Context) {
         val items = if (tracks.isEmpty()) folderItems().shuffled()
         else tracks.shuffled().take(QUEUE_SIZE)
             .map { mediaItemFor(it.path, it.title ?: titleOf(it.path), it.artist ?: artistOf(it.path)) }
+        // A random queue has no biometric target — nothing to measure drift against.
+        uiPrefs.edit().remove(KEY_BUILT_ENERGY).apply()
         return setQueue(player, items, autoPlay)
+    }
+
+    /**
+     * Auto-re-steer (SPEC §6 "queue regenerates when the target drifts past a threshold"): if the
+     * live biometric target has moved ≥ [RESTEER_DRIFT] in energy since the current queue was
+     * built, silently rebuild the UPCOMING tracks to match — the playing track is never touched,
+     * playback state never changes, and nothing is announced. Skipped under a manual mood (a
+     * pinned target can't drift), without an Oura connection, or with no queue to re-steer.
+     * Naturally debounced by the refresh cadence (the trigger fires when a refresh lands, ≥5 min
+     * apart). Call on the player's application thread. Returns true if the queue was re-steered.
+     */
+    suspend fun reSteerIfDrifted(player: Player): Boolean {
+        if (manualMood() != null) return false
+        if (!Oura.repository(context).isConnected) return false
+        if (player.mediaItemCount == 0) return false
+        if (!uiPrefs.contains(KEY_BUILT_ENERGY)) return false // current queue isn't biometric
+        val builtFor = uiPrefs.getFloat(KEY_BUILT_ENERGY, 0.5f)
+        val target = currentTarget()
+        if (kotlin.math.abs(target.energyCenter - builtFor) < RESTEER_DRIFT) return false
+
+        val items = buildItems() // also re-records KEY_BUILT_ENERGY at the new center
+        if (items.isEmpty()) return false
+        val currentId = player.currentMediaItem?.mediaId
+        val upcoming = items.filter { it.mediaId != currentId }
+        player.removeMediaItems(player.currentMediaItemIndex + 1, player.mediaItemCount)
+        player.addMediaItems(upcoming)
+        android.util.Log.i(
+            "OrbnMatch",
+            "auto-re-steer: target drifted %.2f → %.2f (≥%.2f) — upcoming queue rebuilt".format(
+                builtFor, target.energyCenter, RESTEER_DRIFT,
+            ),
+        )
+        _reSteeredAt.value = System.currentTimeMillis() // home mascot bursts on this
+        return true
     }
 
     private fun setQueue(player: Player, items: List<MediaItem>, autoPlay: Boolean): Boolean {
@@ -303,8 +342,22 @@ class QueueBuilder(private val context: Context) {
         }
     }
 
-    private companion object {
-        const val KEY_MOOD = "manual_mood"
+    companion object {
+        private const val KEY_MOOD = "manual_mood"
+        /** Energy center the current queue was built for (persisted across instances). */
+        private const val KEY_BUILT_ENERGY = "built_energy_center"
+        /** Live target must drift at least this far in energy before the queue auto-re-steers
+         *  (= the stress lean's full cap — a max-strength lean alone is just enough to move it). */
+        private const val RESTEER_DRIFT = 0.15f
+
+        private val _reSteeredAt = kotlinx.coroutines.flow.MutableStateFlow(0L)
+        /**
+         * Ticks when an auto-re-steer replaced the upcoming queue (process-wide — the re-steer
+         * runs in PlaybackService, the cue renders on the home mascot). The home screen collects
+         * this and fires the same burst as a manual re-pick, so a queue re-tune is never silent
+         * to a watching user while staying unannounced otherwise (no banner, no sound).
+         */
+        val reSteeredAt: kotlinx.coroutines.flow.StateFlow<Long> = _reSteeredAt
 
         /** How many tracks the matcher samples into a queue per build. */
         const val QUEUE_SIZE = 30
