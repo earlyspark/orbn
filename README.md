@@ -15,6 +15,43 @@ music library, and plays what fits — with a full-screen, nostalgic Winamp visu
 
 ---
 
+## Demo & screenshots
+
+<div align="center">
+
+> ▶️ [Watch the demo on YouTube](https://www.youtube.com/shorts/I9N_934KL6s)
+> 
+> 📝 Read about how it was built and the lessons learned: [*I built a mobile app with Claude Code in 4 days*](https://blog.earlyspark.com/p/i-built-a-mobile-app-with-claude)
+
+<br>
+
+<table>
+<tr>
+<td align="center"><img src="assets/screenshots/home-mascot.png" width="230" alt="Home screen"><br><sub><b>Home</b> — your state at a glance</sub></td>
+<td align="center"><img src="assets/screenshots/home-chill.png" width="230" alt="Mood color"><br><sub><b>Mood color</b> — shifts with your energy</sub></td>
+<td align="center"><img src="assets/screenshots/home-paused.png" width="230" alt="Paused"><br><sub><b>Paused</b> — dozes when the music stops</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="assets/screenshots/mood-picker.png" width="230" alt="Mood picker"><br><sub><b>Mood</b> — override the vibe</sub></td>
+<td align="center"><img src="assets/screenshots/why-this-track.png" width="230" alt="Why this track"><br><sub><b>Why this track</b> — the read behind the pick</sub></td>
+<td align="center"><img src="assets/screenshots/history.png" width="230" alt="History"><br><sub><b>History</b> — rate past picks</sub></td>
+</tr>
+<tr>
+<td align="center" colspan="3"><img src="assets/screenshots/visualizer.png" width="230" alt="Full-screen visualizer"><br><sub><b>Visualizer</b> — full-screen &amp; audio-reactive</sub></td>
+</tr>
+</table>
+
+**Runs on any Android phone, not just the MindOne** — here on a Jelly Max:
+
+<table>
+<tr>
+<td align="center"><img src="assets/screenshots/jellymax-add-music.png" width="200" alt="First run — add music, connect Oura"><br><sub><b>First run</b> — add music, connect Oura</sub></td>
+<td align="center"><img src="assets/screenshots/jellymax-visualizer.png" width="200" alt="Visualizer on a Jelly Max"><br><sub><b>Visualizer</b> — same experience, different device</sub></td>
+</tr>
+</table>
+
+</div>
+
 ## What is orbn?
 
 Most "mood" players use a music streaming service and react to a single number like heart rate.
@@ -23,8 +60,7 @@ orbn is different on three counts:
 - **It plays *your* music** — the local files you own, not a streaming service.
 - **It understands how you are** — using your Oura Ring's overnight recovery/HRV as a daily
   baseline, nudged by your heart rate, movement, **and daytime stress** through the day. (The
-  stress signal is recovered from Oura's daily counters between ring syncs — most players never
-  see it at all.)
+  stress signal is recovered from Oura's daily counters between ring syncs.)
 - **It runs entirely on the device** — analysis, matching, and visuals all happen locally on your
   phone. orbn has no backend and no account of its own; the only thing it ever fetches is your own
   readings from Oura's API, and nothing about your music or listening leaves the device.
@@ -32,6 +68,9 @@ orbn is different on three counts:
 Under the hood, orbn analyzes each song once (tempo, key, energy, mood, genre) and places it in a
 simple *valence–energy* space. Your biometric state becomes a target point in that same space, and
 orbn plays the tracks that fit — with visuals you can just stare at.
+
+The energy (intensity) scale runs **calm → mellow → moderate →
+intense → charged**, and that's the word you'll see on the home readout and in "why this track".
 
 **No Oura Ring, or don't want to connect one?** orbn still works. Pick a **mood** and it matches songs
 to that feel instead of your biometrics. Either way it only ever plays the local music you've added to
@@ -200,17 +239,16 @@ one, delete its `.milk` file from `app/src/main/assets/presets/` and rebuild.
 On-device music analysis → background tagging of your library → playback → Oura integration →
 biometric matching → the full-screen reactive visualizer → a manual mood picker ✅ **— v1, done**
 — → intra-day **stress** as a matching signal + a **body timeline** view ✅ —
-→ **refinement & tuning (ongoing)** → more.
+→ a **settings menu** → **accessibility checks** **— v2** → **refinement & tuning (ongoing)** → more.
 
 ## Status
 
-✅ **v1 is feature-complete, and the matching engine now hears stress: the full loop works end to
+✅ **v1 is feature-complete: the full loop works end to
 end — it reads your body, plays music to match, and visualizes it.** On real hardware, orbn scans
 and analyzes your library entirely on-device (tempo, key, energy, mood, genre), connects to your
-Oura Ring to read your recovery, heart rate, movement, **and daytime stress** into a "how you are
+Oura Ring to read your recovery, heart rate, movement, and daytime stress into a "how you are
 right now" signal, and **builds a play queue that fits that signal** — sampled for variety, ordered
-to flow, and mindful of what you've recently played so it doesn't repeat. Stress is the newest
-ingredient: orbn recovers it between ring syncs from Oura's daily counters, so recent tension leans
+to flow, and mindful of what you've recently played so it doesn't repeat. Recent tension leans
 the music more intense and recovery leans it calmer (orbn *mirrors* you, it doesn't manage you).
 Pull down to re-tune the queue to right now, or **swipe to set a mood** (happy, chill, sad,
 excited…) when you want to override what your body says and pick the feel yourself. Swipe up on a
@@ -218,49 +256,11 @@ playing track to see **why it was picked** — and swipe up again for a **day gr
 heart rate, movement, and stress, drawn from the same data the matcher uses. Now-playing is a
 **full-screen MilkDrop-style visualizer (projectM) that reacts to the live audio** — tap to
 play/pause, double-tap to change the visual (a library of presets you cycle through), long-press to
-exit. Plays back hi-res to the iKKO's DAC when the case is attached. From here, it's refinement —
-polish, QA, and tuning how well songs match your state.
+exit. Plays back hi-res to the iKKO's DAC when the case is attached.
 
-## Demo & screenshots
-
-<div align="center">
-
-<a href="https://www.youtube.com/shorts/I9N_934KL6s">
-  <img src="https://img.youtube.com/vi/I9N_934KL6s/oardefault.jpg" width="230" alt="Watch the orbn demo">
-</a>
-
-**▶ [Watch the demo](https://www.youtube.com/shorts/I9N_934KL6s)**
-
-> 📝 How it was built: [*I built a mobile app with Claude Code in 4 days*](https://blog.earlyspark.com/p/i-built-a-mobile-app-with-claude)
-
-<br>
-
-<table>
-<tr>
-<td align="center"><img src="assets/screenshots/home-mascot.png" width="230" alt="Home screen"><br><sub><b>Home</b> — your state at a glance</sub></td>
-<td align="center"><img src="assets/screenshots/home-chill.png" width="230" alt="Mood color"><br><sub><b>Mood color</b> — shifts with your energy</sub></td>
-<td align="center"><img src="assets/screenshots/home-paused.png" width="230" alt="Paused"><br><sub><b>Paused</b> — dozes when the music stops</sub></td>
-</tr>
-<tr>
-<td align="center"><img src="assets/screenshots/mood-picker.png" width="230" alt="Mood picker"><br><sub><b>Mood</b> — override the vibe</sub></td>
-<td align="center"><img src="assets/screenshots/why-this-track.png" width="230" alt="Why this track"><br><sub><b>Why this track</b> — the read behind the pick</sub></td>
-<td align="center"><img src="assets/screenshots/history.png" width="230" alt="History"><br><sub><b>History</b> — rate past picks</sub></td>
-</tr>
-<tr>
-<td align="center" colspan="3"><img src="assets/screenshots/visualizer.png" width="230" alt="Full-screen visualizer"><br><sub><b>Visualizer</b> — full-screen &amp; audio-reactive</sub></td>
-</tr>
-</table>
-
-**Runs on any Android phone, not just the MindOne** — here on a Jelly Max:
-
-<table>
-<tr>
-<td align="center"><img src="assets/screenshots/jellymax-add-music.png" width="200" alt="First run — add music, connect Oura"><br><sub><b>First run</b> — add music, connect Oura</sub></td>
-<td align="center"><img src="assets/screenshots/jellymax-visualizer.png" width="200" alt="Visualizer on a Jelly Max"><br><sub><b>Visualizer</b> — same experience, different device</sub></td>
-</tr>
-</table>
-
-</div>
+- 🔜 **v2 — up next:** a **settings menu** (orbn is gesture-only today, with no settings screen) and
+  **accessibility checks** (TalkBack, touch targets, contrast, reduced motion). After that, it's
+  refinement — polish, QA, and tuning how well songs match your state.
 
 ## Author
 
