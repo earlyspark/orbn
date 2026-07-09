@@ -59,6 +59,13 @@
             android:exported="false"
             android:theme="@style/Theme.Orbn" />
 
+        <!-- Settings screen. Launched from the home screen's gear icon; not exported. -->
+        <activity
+            android:name=".settings.SettingsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Orbn" />
+
         <!-- Media3 playback service: hosts ExoPlayer + MediaSession for background/lock-screen. -->
         <service
             android:name=".playback.PlaybackService"

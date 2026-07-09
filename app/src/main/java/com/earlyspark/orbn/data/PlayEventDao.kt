@@ -21,6 +21,10 @@ interface PlayEventDao {
     @Query("SELECT * FROM play_events WHERE type = 'PLAYED' ORDER BY playedAt DESC LIMIT :limit")
     suspend fun recentPlays(limit: Int): List<PlayEventEntity>
 
+    /** Remove a track's whole play history (user-initiated delete of the song). */
+    @Query("DELETE FROM play_events WHERE trackPath = :path")
+    suspend fun deleteForTrack(path: String)
+
     /** Total events logged (debug / sanity). */
     @Query("SELECT COUNT(*) FROM play_events")
     suspend fun count(): Int

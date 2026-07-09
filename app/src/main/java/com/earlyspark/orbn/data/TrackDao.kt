@@ -46,6 +46,10 @@ interface TrackDao {
     @Query("DELETE FROM tracks WHERE path NOT IN (:paths)")
     suspend fun deleteMissing(paths: List<String>)
 
+    /** Remove a single track's row (user-initiated delete of the song). */
+    @Query("DELETE FROM tracks WHERE path = :path")
+    suspend fun deleteByPath(path: String)
+
     /** Wipe everything (used when the folder is empty). */
     @Query("DELETE FROM tracks")
     suspend fun deleteAll()

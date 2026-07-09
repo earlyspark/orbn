@@ -45,6 +45,7 @@ import com.earlyspark.orbn.model.biometricReadout
 import com.earlyspark.orbn.model.energyWord
 import com.earlyspark.orbn.oura.Oura
 import com.earlyspark.orbn.playback.PlaybackService
+import com.earlyspark.orbn.settings.Settings
 import com.earlyspark.orbn.ui.HistorySheet
 import com.earlyspark.orbn.ui.MoodSheet
 import com.earlyspark.orbn.ui.RefreshBanner
@@ -94,6 +95,10 @@ class VisualizerActivity : ComponentActivity() {
 
     private val queueBuilder by lazy { QueueBuilder(applicationContext) }
 
+    // Settings toggle: ignore the three sheet-opening swipes (mood / history / why-this-track).
+    // Re-read in onResume so a change made in Settings applies on return without a restart.
+    private var suppressDrawers = false
+
     // Compose overlay state (the home sheets reused over the GL surface).
     private val showOverride = MutableStateFlow(false)
     private val whyThisTrack = MutableStateFlow<WhyThisTrack?>(null)
@@ -128,6 +133,7 @@ class VisualizerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        suppressDrawers = Settings.suppressVizDrawers(this)
 
         presetPaths = copyPresetsToFiles()
         presetIndex = restorePresetIndex() // resume the preset from last time
@@ -246,6 +252,7 @@ class VisualizerActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        suppressDrawers = Settings.suppressVizDrawers(this)
         // Hold off memory-heavy background tagging while the GL visualizer is up.
         AnalysisGate.setVisualizerActive(true)
         hideSystemBars() // bars can reappear after some system interactions
@@ -416,14 +423,22 @@ class VisualizerActivity : ComponentActivity() {
         if (c.isPlaying) c.pause() else c.play()
     }
 
-    /** Classify a swipe (D24, parity with home): left=mood, up=why-this-track, down=rematch. */
+    /**
+     * Classify a swipe (D24, parity with home): left=mood, up=why-this-track, down=rematch.
+     * With the suppress-drawers setting on, the three sheet-opening swipes are ignored here (the
+     * raw touch classifier and every dismissal path are untouched); swipe-down re-match always works.
+     */
     private fun onSwipe(dx: Float, dy: Float) {
         if (kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+            if (suppressDrawers) return           // mood / history suppressed
             if (dx < 0) showOverride.value = true // swipe left → mood picker
             else openHistory()                    // swipe right → history
         } else {
-            if (dy < 0) openWhyThisTrack()        // swipe up → why this track
-            else reMatch()                        // swipe down → rematch
+            if (dy < 0) {
+                if (!suppressDrawers) openWhyThisTrack() // swipe up → why this track (suppressible)
+            } else {
+                reMatch()                         // swipe down → rematch (ALWAYS works)
+            }
         }
     }
 

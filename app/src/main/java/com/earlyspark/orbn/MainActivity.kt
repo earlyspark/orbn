@@ -26,12 +26,19 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Settings as SettingsIcon
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
@@ -69,6 +76,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.work.WorkManager
+import com.earlyspark.orbn.data.OrbnDatabase
 import com.earlyspark.orbn.library.LibraryRepository
 import com.earlyspark.orbn.library.TaggingService
 import com.earlyspark.orbn.match.FeedbackBias
@@ -85,6 +93,8 @@ import com.earlyspark.orbn.oura.OuraAuthManager
 import com.earlyspark.orbn.oura.OuraRepository
 import com.earlyspark.orbn.playback.AudioCapabilities
 import com.earlyspark.orbn.playback.PlaybackService
+import com.earlyspark.orbn.settings.Settings
+import com.earlyspark.orbn.settings.SettingsActivity
 import com.earlyspark.orbn.model.WhyThisTrack
 import com.earlyspark.orbn.ui.HistorySheet
 import com.earlyspark.orbn.ui.MoodChip
@@ -157,6 +167,13 @@ class MainActivity : ComponentActivity() {
     private val showHistory = MutableStateFlow(false)
     private val historyEntries = MutableStateFlow<List<HistoryEntry>>(emptyList())
 
+    // Two-tap delete: the first trash tap arms it (auto-disarms after a beat); the second deletes.
+    private val deleteArmed = MutableStateFlow(false)
+    private var deleteArmJob: Job? = null
+
+    // Reduce-motion setting, re-read in onResume so returning from Settings picks up a change.
+    private val reduceMotion = MutableStateFlow(false)
+
     private var bannerJob: Job? = null
 
     private val playerListener = object : Player.Listener {
@@ -168,6 +185,9 @@ class MainActivity : ComponentActivity() {
             nowPlaying.value = mediaItem?.mediaMetadata?.title?.toString()
             nowPlayingArtist.value = mediaItem?.mediaMetadata?.artist?.toString()
             startedCurrent.value = false // a fresh track at 0:00 is "tap to play", not "paused"
+            // The song changed under an armed trash button — disarm so a pending second tap can
+            // never delete a different song than the one shown when it was armed.
+            disarmDelete()
             // Keep the biometric target warm around track boundaries (gated — usually a no-op).
             refreshOuraStatus(forceNetwork = false)
         }
@@ -178,6 +198,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         repository = LibraryRepository(applicationContext)
         manualMood.value = queueBuilder.manualMood()
+        reduceMotion.value = Settings.reduceMotion(this)
         // Keep the cached library size current for onOrbTap's "no music yet" branch.
         lifecycleScope.launch { repository.totalCount.collect { libraryTotal = it } }
 
@@ -219,6 +240,8 @@ class MainActivity : ComponentActivity() {
                 val mood by manualMood.collectAsState(initial = null)
                 val historyVisible by showHistory.collectAsState(initial = false)
                 val history by historyEntries.collectAsState(initial = emptyList())
+                val track by nowPlaying.collectAsState(initial = null)
+                val armed by deleteArmed.collectAsState(initial = false)
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     OrbnHome(
@@ -233,6 +256,7 @@ class MainActivity : ComponentActivity() {
                         ouraEnergy = ouraEnergy,
                         orbBurst = orbBurst,
                         addMusicNudge = addMusicNudge,
+                        reduceMotion = reduceMotion,
                         onTap = ::onOrbTap,
                         onLongPress = { startActivity(Intent(this@MainActivity, VisualizerActivity::class.java)) },
                         onSwipeUp = ::openWhyThisTrack,
@@ -242,6 +266,39 @@ class MainActivity : ComponentActivity() {
                         onOuraTap = ::onOuraTap,
                         onAddMusic = ::launchAddMusic,
                     )
+                    // Gear + trash sit above the gesture surface in z-order (a tap on them never
+                    // reaches the tap/swipe handlers) but below the sheets (an open sheet covers
+                    // them). Corners are far outside the center tap zone and clear of the
+                    // top-center RefreshBanner / bottom-center text lines.
+                    IconButton(
+                        onClick = { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) },
+                        modifier = Modifier.align(Alignment.TopEnd).systemBarsPadding().padding(8.dp),
+                    ) {
+                        Icon(Icons.Filled.SettingsIcon, contentDescription = "Settings", tint = Color(0xFF5A6173))
+                    }
+                    // Delete-current-song: visible whenever a track is loaded (playing or paused).
+                    if (track != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.align(Alignment.BottomEnd).systemBarsPadding().padding(12.dp),
+                        ) {
+                            if (armed) {
+                                Text(
+                                    text = "tap again to delete",
+                                    color = Color(0xFFD98A8A),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(end = 4.dp),
+                                )
+                            }
+                            IconButton(onClick = ::onDeleteTap) {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = "Delete this song",
+                                    tint = if (armed) Color(0xFFD98A8A) else Color(0xFF5A6173),
+                                )
+                            }
+                        }
+                    }
                     RefreshBanner(message = bannerMsg)
                     MoodSheet(
                         visible = overrideVisible,
@@ -299,6 +356,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Returning from the settings screen always passes through here — pick up any change.
+        reduceMotion.value = Settings.reduceMotion(this)
         // Reflect connection state and the cached biometric target whenever we return to the
         // foreground (e.g. back from the OAuth browser tab). No network here — cache only.
         refreshOuraStatus(forceNetwork = false)
@@ -441,6 +500,60 @@ class MainActivity : ComponentActivity() {
             triggerBurst() // a new song was picked → orb flourish
         }
         showBanner("Skipped — noted for next time")
+    }
+
+    /** First trash tap arms it (auto-disarms after a beat); a second tap while armed deletes. */
+    private fun onDeleteTap() {
+        if (deleteArmed.value) {
+            disarmDelete()
+            deleteCurrentSong()
+        } else {
+            deleteArmed.value = true
+            deleteArmJob?.cancel()
+            deleteArmJob = lifecycleScope.launch {
+                delay(3500)
+                deleteArmed.value = false
+            }
+        }
+    }
+
+    private fun disarmDelete() {
+        deleteArmJob?.cancel()
+        deleteArmJob = null
+        deleteArmed.value = false
+    }
+
+    /**
+     * Delete the playing song for good: advance playback first (removal never interrupts audio —
+     * or stop if it's the last item), then remove orbn's copy of the file plus every DB row that
+     * references it. All MediaController calls stay on main (Media3 requirement); disk + DB on IO.
+     * The seek makes PlaybackService log the departed track SKIPPED, but deleteForTrack erases the
+     * track's history right after — the rare race leaving one orphan row is harmless.
+     */
+    private fun deleteCurrentSong() {
+        val c = controller ?: return
+        val path = c.currentMediaItem?.mediaId ?: return // mediaId == absolute file path
+        val index = c.currentMediaItemIndex
+        val title = c.currentMediaItem?.mediaMetadata?.title?.toString()
+        if (c.hasNextMediaItem()) {
+            c.seekToNextMediaItem()
+            c.removeMediaItem(index)
+        } else {
+            c.stop() // last/only item: graceful stop
+            c.clearMediaItems() // → transition(null) clears nowPlaying, hides the trash button
+        }
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                // A failed file delete is reconciled by the next foreground scan(); a track row may
+                // not exist for an unanalyzed folder-fallback item — DELETE WHERE is then a no-op.
+                runCatching { File(path).delete() }
+                val db = OrbnDatabase.get(applicationContext)
+                db.trackDao().deleteByPath(path)
+                db.feedbackDao().clear(path)
+                db.playEventDao().deleteForTrack(path)
+            }
+            showBanner(title?.let { "Deleted “$it”" } ?: "Deleted")
+        }
     }
 
     /** Open the system file picker for audio (SAF — no storage permission). Result → [importMusicFiles]. */
@@ -610,6 +723,7 @@ fun OrbnHome(
     ouraEnergy: Flow<Float?>,
     orbBurst: Flow<Int>,
     addMusicNudge: Flow<Int>,
+    reduceMotion: Flow<Boolean>,
     onTap: () -> Unit,
     onLongPress: () -> Unit,
     onSwipeUp: () -> Unit,
@@ -629,6 +743,7 @@ fun OrbnHome(
     val mood by manualMood.collectAsState(initial = null)
     val ouraE by ouraEnergy.collectAsState(initial = null)
     val burstTick by orbBurst.collectAsState(initial = 0)
+    val reduce by reduceMotion.collectAsState(initial = false)
 
     // Effective energy drives the mascot's head hue: a chosen mood's energy wins, else Oura, else a
     // neutral middle.
@@ -640,8 +755,8 @@ fun OrbnHome(
     // library yet. Single soft pulse (no strobe — photosensitivity).
     val nudgeTick by addMusicNudge.collectAsState(initial = 0)
     val nudge = remember { Animatable(0f) }
-    LaunchedEffect(nudgeTick) {
-        if (nudgeTick > 0) {
+    LaunchedEffect(nudgeTick, reduce) {
+        if (nudgeTick > 0 && !reduce) {
             nudge.animateTo(1f, tween(durationMillis = 160, easing = LinearOutSlowInEasing))
             nudge.animateTo(0f, tween(durationMillis = 520, easing = FastOutSlowInEasing))
         }
@@ -667,8 +782,8 @@ fun OrbnHome(
     var orbCenter by remember { mutableStateOf<Offset?>(null) }
     var missedTapTick by remember { mutableIntStateOf(0) }
     val wobble = remember { Animatable(0f) }
-    LaunchedEffect(missedTapTick) {
-        if (missedTapTick > 0) {
+    LaunchedEffect(missedTapTick, reduce) {
+        if (missedTapTick > 0 && !reduce) {
             // A few quick decaying side-to-side nudges — motion only, no brightness change
             // (photosensitivity: nothing here flashes).
             wobble.animateTo(1f, tween(durationMillis = 90))
@@ -735,6 +850,7 @@ fun OrbnHome(
                 playing = playing,
                 burstTick = burstTick,
                 nudgeTick = nudgeTick,
+                animate = !reduce,
                 modifier = Modifier
                     .offset(x = (wobble.value * 6).dp)
                     .size(150.dp)

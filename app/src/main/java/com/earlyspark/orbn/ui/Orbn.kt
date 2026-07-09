@@ -95,6 +95,8 @@ private fun affectColor(valence: Float, energy: Float): Color {
  * @param playing whether audio is currently playing (awake vs. dozing)
  * @param burstTick one-shot counter, bumped on a deliberate re-pick → happy reaction + colour pop
  * @param nudgeTick one-shot counter, bumped when the orb is tapped with an empty library → glance down
+ * @param animate false = hold still (reduce-motion setting): no idle loops or reactions. State cues
+ *                (dozing eyes, affect hue) still apply — they're state, not motion.
  */
 @Composable
 fun Orbn(
@@ -104,6 +106,7 @@ fun Orbn(
     burstTick: Int,
     nudgeTick: Int,
     modifier: Modifier = Modifier,
+    animate: Boolean = true,
 ) {
     // --- Mutable expression state, nudged by the timers/reactions below. ---
     var blink by remember { mutableStateOf(false) }
@@ -121,8 +124,10 @@ fun Orbn(
     }
 
     // Blink: an occasional quick shut, rarely a double. Only while awake. Kept infrequent so the
-    // character feels calm, not twitchy.
-    LaunchedEffect(playing) {
+    // character feels calm, not twitchy. (Re-keying on `animate` kills/restarts the idle loops when
+    // the reduce-motion setting flips; each loop opens with a delay, so there's no visual pop.)
+    LaunchedEffect(playing, animate) {
+        if (!animate) return@LaunchedEffect
         while (true) {
             delay(Random.nextLong(6000, 13000))
             if (playing) {
@@ -133,7 +138,8 @@ fun Orbn(
     }
 
     // Bob: a single gentle nod every so often — NOT a steady breathing pulse, and not music-synced.
-    LaunchedEffect(playing) {
+    LaunchedEffect(playing, animate) {
+        if (!animate) return@LaunchedEffect
         while (true) {
             delay(Random.nextLong(12000, 24000))
             if (playing) nod()
@@ -141,7 +147,8 @@ fun Orbn(
     }
 
     // Smile: rests neutral, eases into a brief smile now and then. Only while awake.
-    LaunchedEffect(playing) {
+    LaunchedEffect(playing, animate) {
+        if (!animate) return@LaunchedEffect
         while (true) {
             delay(Random.nextLong(10000, 20000))
             if (playing) { smile = true; delay(Random.nextLong(1800, 3200)); smile = false }
@@ -149,7 +156,8 @@ fun Orbn(
     }
 
     // Gaze: a subtle catch-light shift so the eyes glance around. Only while awake.
-    LaunchedEffect(playing) {
+    LaunchedEffect(playing, animate) {
+        if (!animate) return@LaunchedEffect
         while (true) {
             delay(Random.nextLong(8000, 16000))
             if (playing) { look = listOf(-1, 1, -1, 0).random(); delay(Random.nextLong(700, 1300)); look = 0 }
@@ -160,8 +168,8 @@ fun Orbn(
     // The try/finally guarantees the transient flags reset even if this coroutine is cancelled mid-perk
     // (nod() animates the shared bobY Animatable — a competing nod from another effect cancels us, see
     // the burst effect below). Without it a stuck `blink` would shut the eyes while actually playing.
-    LaunchedEffect(playing) {
-        if (playing) {
+    LaunchedEffect(playing, animate) {
+        if (playing && animate) {
             try {
                 blink = true; delay(110); blink = false
                 nod()
@@ -177,8 +185,10 @@ fun Orbn(
     // playback, firing the play-transition nod() above, whose competing bobY.animateTo cancels this
     // coroutine mid-reaction. The try/finally resets `wide`/`smile` regardless, so they never latch on —
     // a stuck `wide` keeps `dozing` false and the mascot can't sleep when later paused.
+    // (Keyed on burstTick only — adding `animate` to the key would replay a stale burst when
+    // re-enabling motion; the condition alone suppresses it while reduced.)
     LaunchedEffect(burstTick) {
-        if (burstTick > 0) {
+        if (burstTick > 0 && animate) {
             try {
                 wide = true; smile = true
                 nod()
@@ -192,7 +202,7 @@ fun Orbn(
     // …and the head briefly flushes a different colour, then eases back. Slow ease, no strobe.
     val burstColor = remember { Animatable(0f) }
     LaunchedEffect(burstTick) {
-        if (burstTick > 0) {
+        if (burstTick > 0 && animate) {
             burstColor.snapTo(0f)
             burstColor.animateTo(1f, tween(durationMillis = 420, easing = LinearOutSlowInEasing))
             burstColor.animateTo(0f, tween(durationMillis = 1200, easing = FastOutSlowInEasing))
@@ -201,7 +211,7 @@ fun Orbn(
 
     // Empty-library nudge → glance down toward the "add music" cue + a gentle nod.
     LaunchedEffect(nudgeTick) {
-        if (nudgeTick > 0) {
+        if (nudgeTick > 0 && animate) {
             lookDown = true; look = 0
             nod()
             delay(300); lookDown = false
