@@ -178,6 +178,12 @@ Either way, **orbn copies the files into its own folder** — your originals are
 modified. Because they live inside the app, **uninstalling orbn deletes its copies** (re-importing is
 quick). Supported: `mp3`, `flac`, `m4a`, `aac`, `ogg`, `wav`.
 
+**Removing a song:** while a track is playing (or paused), tap the trash icon in the bottom corner
+and tap again to confirm — orbn **deletes the file from the phone** (its Music folder), clears the
+song's listening history, and advances to the next pick. If the song came from somewhere else — your
+computer, Downloads, a cloud provider — that source copy isn't touched, so you can re-import it
+anytime.
+
 **How analysis works:** when you add music, orbn analyzes each track on-device — tempo, key, energy,
 mood, and genre — and nothing is uploaded. The home screen and a notification show the progress
 (`tagging your library… 3 / 12`), and a track becomes available to play once it's been analyzed. It's
@@ -239,7 +245,8 @@ one, delete its `.milk` file from `app/src/main/assets/presets/` and rebuild.
 On-device music analysis → background tagging of your library → playback → Oura integration →
 biometric matching → the full-screen reactive visualizer → a manual mood picker ✅ **— v1, done**
 — → intra-day **stress** as a matching signal + a **body timeline** view ✅ —
-→ a **settings menu** → **accessibility checks** **— v2** → **refinement & tuning (ongoing)** → more.
+→ a **settings menu** ✅ → **accessibility checks** (reduced-motion option ✅) **— v2** →
+**refinement & tuning (ongoing)** → more.
 
 ## Status
 
@@ -258,9 +265,11 @@ heart rate, movement, and stress, drawn from the same data the matcher uses. Now
 play/pause, double-tap to change the visual (a library of presets you cycle through), long-press to
 exit. Plays back hi-res to the iKKO's DAC when the case is attached.
 
-- 🔜 **v2 — up next:** a **settings menu** (orbn is gesture-only today, with no settings screen) and
-  **accessibility checks** (TalkBack, touch targets, contrast, reduced motion). After that, it's
-  refinement — polish, QA, and tuning how well songs match your state.
+- 🔜 **v2 — in progress:** a **settings menu** has landed — reach it from the gear on the home
+  screen — with a **reduced-motion** toggle (holds the mascot still) and an option to suppress the
+  visualizer's swipe-open drawers. Still to come: the rest of the **accessibility checks** (TalkBack,
+  touch targets, contrast). After that, it's refinement — polish, QA, and tuning how well songs
+  match your state.
 
 ## Author
 
