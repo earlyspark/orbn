@@ -1,10 +1,14 @@
 package com.earlyspark.orbn.settings
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +26,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +37,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
+import com.earlyspark.orbn.library.LibraryRepository
+import com.earlyspark.orbn.library.TaggingService
+import com.earlyspark.orbn.ui.RefreshBanner
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 
 // Palette matching the home screen and the sheets.
 private val OrbnBg = Color(0xFF0A0A0F)
@@ -45,13 +59,59 @@ private val Accent = Color(0xFF5B8DEF)
  */
 class SettingsActivity : ComponentActivity() {
 
+    private val repository by lazy { LibraryRepository(applicationContext) }
+
+    // Same SAF "add music" import as the home CTA: pick audio from anywhere on the device;
+    // orbn copies it into its own Music folder — no storage permission needed.
+    private val importMusic = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> if (!uris.isNullOrEmpty()) importMusicFiles(uris) }
+
+    private val banner = MutableStateFlow<String?>(null)
+    private var bannerJob: Job? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(background = OrbnBg)) {
-                SettingsScreen(onBack = { finish() })
+                Box(modifier = Modifier.fillMaxSize()) {
+                    SettingsScreen(onBack = { finish() })
+                    val bannerMsg by banner.collectAsState()
+                    RefreshBanner(message = bannerMsg)
+                }
             }
+        }
+    }
+
+    /** Open the system file picker for audio (SAF). Result → [importMusicFiles]. */
+    private fun launchAddMusic() {
+        runCatching { importMusic.launch(arrayOf("audio/*")) }
+            .onFailure { showBanner("No file picker available") }
+    }
+
+    /** Copy the picked files into orbn's Music folder, then register + tag them (shared repo path). */
+    private fun importMusicFiles(uris: List<Uri>) {
+        lifecycleScope.launch {
+            showBanner("Importing ${uris.size} ${if (uris.size == 1) "song" else "songs"}…")
+            val added = repository.importFiles(uris)
+            if (added > 0) {
+                repository.scan()
+                TaggingService.start(applicationContext)
+                showBanner("Added $added · analyzing in the background")
+            } else {
+                showBanner("Couldn't import those files")
+            }
+        }
+    }
+
+    /** Top banner message, auto-clearing after a beat (same as home). */
+    private fun showBanner(message: String) {
+        banner.value = message
+        bannerJob?.cancel()
+        bannerJob = lifecycleScope.launch {
+            delay(2200)
+            banner.value = null
         }
     }
 
@@ -102,6 +162,34 @@ class SettingsActivity : ComponentActivity() {
                     Settings.setSuppressVizDrawers(this@SettingsActivity, it)
                 },
             )
+            ActionRow(
+                title = "Add music",
+                subtitle = "Import songs from anywhere on this phone — orbn keeps its own copy.",
+                onClick = ::launchAddMusic,
+            )
+        }
+    }
+
+    /** A tappable settings entry (no switch) — a title/subtitle row that fires an action. */
+    @Composable
+    private fun ActionRow(title: String, subtitle: String, onClick: () -> Unit) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 28.dp)
+                .clickable(onClick = onClick),
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                Text(text = title, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    text = subtitle,
+                    color = TextDim,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            Icon(Icons.Filled.Add, contentDescription = null, tint = IconDim)
         }
     }
 

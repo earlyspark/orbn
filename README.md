@@ -167,8 +167,9 @@ This is a debug build, which is fine for personal use.
 
 orbn plays the local files you own. There are two ways to get them in:
 
-- **In-app (recommended, works on any phone):** tap **"add music"** on the home screen and pick the
-  tracks from anywhere on your device — Downloads, internal storage, an SD card, or a cloud provider.
+- **In-app (recommended, works on any phone):** tap **"add music"** on the home screen (shown while
+  your library is empty), or **⚙ settings → "Add music"** anytime after that, and pick the tracks
+  from anywhere on your device — Downloads, internal storage, an SD card, or a cloud provider.
 - **Manually:** copy audio files over USB into the app's folder at
   `Android/data/com.earlyspark.orbn/files/Music/`. Note that some phones hide `Android/data` from a
   computer's file browser — if you can't see it, use the in-app picker instead (or copy to your
@@ -266,10 +267,10 @@ play/pause, double-tap to change the visual (a library of presets you cycle thro
 exit. Plays back hi-res to the iKKO's DAC when the case is attached.
 
 - 🔜 **v2 — in progress:** a **settings menu** has landed — reach it from the gear on the home
-  screen — with a **reduced-motion** toggle (holds the mascot still) and an option to suppress the
-  visualizer's swipe-open drawers. Still to come: the rest of the **accessibility checks** (TalkBack,
-  touch targets, contrast). After that, it's refinement — polish, QA, and tuning how well songs
-  match your state.
+  screen — with a **reduced-motion** toggle (holds the mascot still), an option to suppress the
+  visualizer's swipe-open drawers, and an **"add music"** entry to import more songs anytime. Still to
+  come: the rest of the **accessibility checks** (TalkBack, touch targets, contrast). After that, it's
+  refinement — polish, QA, and tuning how well songs match your state.
 
 ## Author
 

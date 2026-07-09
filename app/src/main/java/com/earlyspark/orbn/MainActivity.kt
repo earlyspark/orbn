@@ -7,8 +7,6 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -569,7 +567,7 @@ class MainActivity : ComponentActivity() {
     private fun importMusicFiles(uris: List<Uri>) {
         lifecycleScope.launch {
             showBanner("Importing ${uris.size} ${if (uris.size == 1) "song" else "songs"}…")
-            val added = withContext(Dispatchers.IO) { copyIntoMusicFolder(uris) }
+            val added = repository.importFiles(uris) // shared with the settings "Add music" entry
             if (added > 0) {
                 rescanAndTag() // register the new files + kick off background analysis
                 showBanner("Added $added · analyzing in the background")
@@ -577,54 +575,6 @@ class MainActivity : ComponentActivity() {
                 showBanner("Couldn't import those files")
             }
         }
-    }
-
-    /** Stream each content URI into a uniquely-named file in the Music folder. Returns the count copied. */
-    private suspend fun copyIntoMusicFolder(uris: List<Uri>): Int = withContext(Dispatchers.IO) {
-        val dir = repository.musicDir()?.apply { mkdirs() } ?: return@withContext 0
-        var added = 0
-        for (uri in uris) {
-            val name = displayName(uri) ?: continue
-            val target = uniqueFile(dir, name)
-            runCatching {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    target.outputStream().use { output -> input.copyTo(output) }
-                } ?: error("no input stream")
-                added++
-            }.onFailure {
-                Log.w("OrbnImport", "import failed for $name: ${it.message}")
-                target.delete() // don't leave a half-written file behind
-            }
-        }
-        added
-    }
-
-    /** The picked file's display name (e.g. "song.mp3"), or the URI's last path segment as a fallback. */
-    private fun displayName(uri: Uri): String? {
-        val raw = run {
-            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (idx >= 0 && c.moveToFirst()) c.getString(idx)?.let { return@run it }
-            }
-            uri.lastPathSegment
-        } ?: return null
-        // Reduce to a bare filename: never let a provider-supplied name with path separators ("../…")
-        // escape the Music folder when used in File(dir, name).
-        return raw.substringAfterLast('/').substringAfterLast('\\').trim().ifBlank { null }
-    }
-
-    /** Avoid clobbering an existing file: "song.mp3" → "song (1).mp3" if taken. */
-    private fun uniqueFile(dir: File, name: String): File {
-        var f = File(dir, name)
-        if (!f.exists()) return f
-        val base = name.substringBeforeLast('.', name)
-        val ext = name.substringAfterLast('.', "")
-        var i = 1
-        while (f.exists()) {
-            f = File(dir, if (ext.isEmpty()) "$base ($i)" else "$base ($i).$ext")
-            i++
-        }
-        return f
     }
 
     /** Reconcile the folder with the DB, then start the (resumable) tagging service. */
@@ -894,8 +844,8 @@ fun OrbnHome(
                         .widthIn(max = (LocalConfiguration.current.screenWidthDp * 0.9f).dp)
                         .basicMarquee(iterations = Int.MAX_VALUE), // loop forever, don't freeze clipped
                 )
-                // Empty library → tappable CTA that opens the SAF picker to import music. (A persistent
-                // "add more" entry point lives in M10 settings; this is the onboarding affordance.)
+                // Empty library → tappable CTA that opens the SAF picker to import music. (The
+                // persistent entry point is Settings → "Add music"; this is the onboarding affordance.)
                 // Styled like the "tap to play" status line, just clickable.
                 total == 0 -> {
                     val nv = nudge.value
